@@ -1,0 +1,13 @@
+how to become exceptional - by Divya Venkat.html
+how to become exceptional - by Divya Venkat.mhtml
+how_to_be_exceptional.md
+how_to_become_exceptional_web.md
+main.py
+out.text
+out.txt
+pyproject.toml
+README.md
+substack_exports
+substack_to_markdown.py
+test.cpp
+uv.lock
