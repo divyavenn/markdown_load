@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "Markdown.load",
+  "description": "Save Substack articles as Markdown with one click.",
+  "version": "0.1.0",
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Markdown.load"
+  },
+  "background": {
+    "service_worker": "service_worker.js"
+  },
+  "permissions": [
+    "activeTab",
+    "cookies",
+    "downloads",
+    "storage"
+  ],
+  "host_permissions": [
+    "https://*.substack.com/*",
+    "http://127.0.0.1/*",
+    "http://localhost/*"
+  ]
+}

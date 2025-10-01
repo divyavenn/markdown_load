@@ -7,6 +7,21 @@ requires-python = ">=3.10"
 dependencies = [
     "beautifulsoup4>=4.14.0",
     "fastapi>=0.114.2",
+    "pydantic>=2.11.0",
     "requests>=2.32.5",
     "uvicorn>=0.30.5",
+    "bs4>=0.0.1",
+]
+
+[project.optional-dependencies]
+pdf = [
+    "marker-pdf>=0.3.0",
+    "PyPDF2>=3.0.0",
+    "python-dotenv>=1.0.1",
+    "torch>=2.2.0",
+]
+youtube = [
+    "openai-whisper>=20231117",
+    "webvtt-py>=0.4.6",
+    "yt-dlp>=2024.8.6",
 ]

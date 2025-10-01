@@ -26,8 +26,34 @@ app.add_middleware(
 
 
 
+@app.post("/convert-tweet", response_class=Response)
+async def convert_post(payload: ConvertRequest) -> Response:
+    url = str(payload.url)
+    cookie_value = (payload.substack_sid or "").strip()
 
-@app.post("/convert", response_class=Response)
+    cookies = {"substack.sid": cookie_value} if cookie_value else {}
+
+    try:
+        html = fetch_html(url, cookies=cookies)
+        markdown, metadata = convert_html_to_markdown(html, url)
+    except requests.HTTPError as exc:  # network / Substack failure
+        raise HTTPException(status_code=exc.response.status_code if exc.response else 502,
+                            detail=f"Substack request failed: {exc}") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    filename = payload.filename.strip() if payload.filename else derive_filename(url, metadata.get("title", ""))
+    if not filename.lower().endswith(".md"):
+        filename += ".md"
+
+    headers = {
+        "Content-Disposition": f'attachment; filename="{filename}"'
+    }
+
+    return Response(content=markdown, media_type="text/markdown", headers=headers)
+
+
+@app.post("/convert-substack", response_class=Response)
 async def convert_post(payload: ConvertRequest) -> Response:
     url = str(payload.url)
     cookie_value = (payload.substack_sid or "").strip()
