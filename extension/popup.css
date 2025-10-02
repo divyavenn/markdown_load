@@ -1,15 +1,12 @@
 :root {
   font-family: "Inter", "Segoe UI", sans-serif;
   color-scheme: light;
-  --color-surface: #fff9f197;
-  --color-panel: #fff0e0;
-  --color-border: rgba(255, 255, 255, 0.7);
-  --color-text: #1f1a13;
-  --color-muted: rgba(255, 149, 0, 0.6);
-  --color-accent: #ff6a00;
-  --color-accent-strong: #ff9a1f;
-  --color-danger: #dc2626;
-  --color-bg: #ff7e0c;
+  --dark_orange: rgba(233, 66, 0, 0.8);
+  --medium_orange: rgba(255, 85, 0, 0.845);
+  --light_orange: rgba(255, 154, 48, 0.845);
+  --bright_orange: #ff6a00;
+  --tangerine:  #ff9a1f;
+
 }
 
 
@@ -60,7 +57,7 @@ body {
   min-width: 280px;
   max-width: 360px;
   margin: 20px 20px;
-  background: rgba(255, 85, 0, 0.845);
+  background: var(--dark_orange);
   border-radius: 20px;
   box-shadow: 0 20px 40px rgba(15, 23, 42, 0.337);
   padding: 18px 16px 20px;
@@ -122,7 +119,7 @@ body {
 }
 
 .icon-button.primary {
-  background: linear-gradient(135deg, var(--color-accent), var(--color-accent-strong));
+  background: linear-gradient(135deg, var(--bright_orange), var(--tangerine));
   border: none;
   color: #ffffff;
   width: 40px;

@@ -77,5 +77,5 @@ class RainChar {
 }
 
 const chars = "ABCDEFGHIJKLMNOPRSTUVWXYZ";
-const rain = new RainChar("monospace", 10, chars, "#ff7e0c", "#fff9f197");
+const rain = new RainChar("monospace", 10, chars, "#ff6a00", "#fff9f197");
 rain.play();
