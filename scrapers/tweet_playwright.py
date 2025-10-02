@@ -223,7 +223,7 @@ def cookie_still_valid(state: dict[str, Any]) -> bool:
     return False
 
 
-async def get_browser(cookies : dict[str, str] | None = None) :
+async def get_browser(cookies: Mapping[str, Any] | None = None):
     playwright = await async_playwright().start()
     browser = await playwright.chromium.launch(headless=True)
     session = cookies or cookies_correct
@@ -231,7 +231,7 @@ async def get_browser(cookies : dict[str, str] | None = None) :
     return browser, ctx
 
 
-async def get_thread(tweet_url: str, root_id: str | None = None, cookies : dict[str, str] | None = None) -> list[str]:
+async def get_thread(tweet_url: str, root_id: str | None = None, cookies: Mapping[str, Any] | None = None) -> list[str]:
     browser, ctx = await get_browser(cookies=cookies)
     page = await ctx.new_page()
 
@@ -351,4 +351,3 @@ async def get_thread(tweet_url: str, root_id: str | None = None, cookies : dict[
         await page.close()
 
     return results
-

@@ -18,7 +18,13 @@
   ],
   "host_permissions": [
     "https://*.substack.com/*",
+    "https://x.com/*",
+    "https://*.x.com/*",
+    "https://twitter.com/*",
+    "https://*.twitter.com/*",
     "http://127.0.0.1/*",
-    "http://localhost/*"
+    "http://127.0.0.1:8000/*",
+    "http://localhost/*",
+    "http://localhost:8000/*"
   ]
 }

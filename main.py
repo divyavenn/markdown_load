@@ -30,7 +30,6 @@ app.add_middleware(
 )
 
 
-
 def format_cookies_twitter(cookies: dict[str, str]) -> dict[str, Any]:
     formatted: list[dict[str, Any]] = []
 

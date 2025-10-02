@@ -1,15 +1,26 @@
 :root {
   font-family: "Inter", "Segoe UI", sans-serif;
   color-scheme: light;
-  --color-surface: rgba(255, 249, 241, 0.82);
-  --color-panel: rgba(255, 240, 224, 0.55);
-  --color-border: rgba(255, 255, 255, 0.4);
+  --color-surface: #fff9f197;
+  --color-panel: #fff0e0;
+  --color-border: rgba(255, 255, 255, 0.7);
   --color-text: #1f1a13;
   --color-muted: rgba(255, 149, 0, 0.6);
-  --color-accent: #ff7a18;
-  --color-accent-strong: #ff9742;
+  --color-accent: #ff6a00;
+  --color-accent-strong: #ff9a1f;
   --color-danger: #dc2626;
+  --color-bg: #ff7e0c;
 }
+
+
+@import url('https://fonts.googleapis.com/css2?family=Caveat:wght@400..700&display=swap');
+
+
+body, .container, .list-item {
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
 
 * {
   scrollbar-width: none;
@@ -27,36 +38,37 @@ body {
   min-width: 260px;
   min-height: 220px;
   overflow: hidden;
-  background: #c6c7c9;
+  background: #0f172a;
   display: flex;
   align-items: center;
   justify-content: center;
 
 }
 
-#fog-canvas {
+#rain-effect {
   position: fixed;
   inset: 0;
   width: 100%;
   height: 100%;
-  z-index: -2;
+  pointer-events: none;
+  z-index: 0;
 }
 
 .container {
   position: relative;
+  z-index: 1;
   min-width: 280px;
   max-width: 360px;
   margin: 20px 20px;
-  background: var(--color-surface);
+  background: rgba(255, 85, 0, 0.845);
   border-radius: 20px;
-  box-shadow: 0 20px 40px rgba(15, 23, 42, 0.2);
+  box-shadow: 0 20px 40px rgba(15, 23, 42, 0.337);
   padding: 18px 16px 20px;
   display: flex;
   flex-direction: column;
   gap: 14px;
   color: var(--color-text);
-  font-size: 0.875rem;
-  backdrop-filter: blur(10px);
+
 }
 
 .control-row {
@@ -68,12 +80,12 @@ body {
 
 .input {
   flex: 1;
-  border: 1px solid var(--color-border);
+  border: none;
   border-radius: 12px;
   padding: 10px 12px;
-  font-size: 0.85rem;
-  background: rgba(255, 255, 255, 0.735);
-  color: var(--color-text);
+  font-size: 0.8rem;
+  background:  #ff9a1f84;
+  color: white;
 }
 
 .input:focus {
@@ -85,9 +97,9 @@ body {
   width: 42px;
   height: 42px;
   border-radius: 50%;
-  border: 1px solid rgba(255, 255, 255, 0.3);
-  background: rgba(255, 255, 255, 0.15);
-  color: var(--color-accent);
+  border: none;
+  background: #ffffff00;
+  color: white;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -96,8 +108,8 @@ body {
 }
 
 .icon-button svg {
-  width: 20px;
-  height: 20px;
+  width: 25px;
+  height: 25px;
   fill: currentColor;
 }
 
@@ -132,7 +144,7 @@ body {
   height: 34px;
   border-radius: 50%;
   border: 1px solid rgba(255, 255, 255, 0.45);
-  background: rgba(255, 255, 255, 0.85);
+  background: #ffffff00;
   color: var(--color-accent);
 }
 
@@ -150,7 +162,7 @@ body {
 .btn-circle.accent {
   border: none;
   background: linear-gradient(135deg, var(--color-accent), var(--color-accent-strong));
-  color: #ffffff;
+  color: #ffffff00;
   box-shadow: 0 8px 18px rgba(255, 122, 24, 0.25);
 }
 
@@ -161,6 +173,7 @@ body {
   gap: 10px;
   max-height: 180px;
   overflow-y: auto;
+  color: rgb(255, 255, 255);
   margin: 0;
   padding: 0;
   list-style: none;
@@ -171,8 +184,8 @@ body {
   display: flex;
   align-items: center;
   gap: 12px;
-  background: rgba(255, 255, 255, 0.9);
-  border: 1px solid rgba(255, 255, 255, 0.6);
+  background: #ffffff00;
+  border: none;
   border-radius: 14px;
   box-shadow: 0 10px 20px rgba(241, 112, 19, 0.12);
 }
@@ -182,9 +195,8 @@ body {
   text-align: center;
   padding: 14px 0;
   color: var(--color-muted);
-  background: rgba(255, 255, 255, 0.6);
+  background: #ffffff00;
   border-radius: 14px;
-  font-size: 0.8rem;
 }
 
 .spinner {
@@ -193,7 +205,7 @@ body {
   margin-right: 15px;
   border-radius: 50%;
   border: 2px solid rgba(15, 23, 42, 0.12);
-  border-top-color: #ff9742;
+  border-top-color: #ffffff;
   animation: spin 900ms linear infinite;
 }
 
@@ -223,7 +235,8 @@ body {
   flex: 1;
   min-width: 0;
   max-width: 220px;
-  font-weight: 600;
+  font-weight: 400;
+  font-size: .8rem;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -232,11 +245,11 @@ body {
 .status {
   min-height: 20px;
   text-align: center;
-  padding-top: 40px;
-  font-family: poppins, sans-serif;
-  font-style: italic;
-  font-size: 0.7rem;
-  color: rgb(103, 103, 103);
+  padding-top: 20px;
+  font-family: 'Caveat', cursive;
+  font-weight: 700;
+  font-size: 1.5rem;
+  color: #ffffff;
   margin: 0;
 }
 

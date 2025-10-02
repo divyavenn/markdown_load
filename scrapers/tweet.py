@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import re
 from pathlib import Path
+from typing import Any
 
 
 def slugify(text: str) -> str:
@@ -14,7 +15,7 @@ def slugify(text: str) -> str:
 
 
 
-async def convert_tweet(url: str, cookies: dict[str, str] | None = None) -> tuple[str, str, str]:
+async def convert_tweet(url: str, cookies: dict[str, Any] | None = None) -> tuple[str, str, str]:
     from urllib.parse import urlparse
     from .tweet_playwright import get_thread
 

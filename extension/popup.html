@@ -1,6 +1,9 @@
 <!DOCTYPE html>
 <html lang="en">
   <head>
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Caveat:wght@400..700&display=swap');
+    </style>
     <meta charset="UTF-8" />
     <meta http-equiv="X-UA-Compatible" content="IE=edge" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -8,7 +11,7 @@
     <link rel="stylesheet" href="popup.css" />
   </head>
   <body>
-    <canvas id="fog-canvas" aria-hidden="true"></canvas>
+    <canvas id="rain-effect" aria-hidden="true"></canvas>
     <main class="container">
       <div class="control-row">
         <label for="filename" class="sr-only">File name</label>
@@ -23,7 +26,7 @@
       <ul id="queue-list" class="queue-list"></ul>
       <ul id="ready-list" class="ready-list"></ul>
     </main>
-
+    <script src="animation.js"></script>
     <script src="popup.js" type="module"></script>
   </body>
 </html>

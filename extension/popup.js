@@ -5,13 +5,17 @@ const readyList = document.getElementById('ready-list');
 const filenameInput = document.getElementById('filename');
 const queueButton = document.getElementById('queue');
 const statusLabel = document.getElementById('status');
-const fogCanvas = document.getElementById('fog-canvas');
+
+
+const TWITTER_THREAD_REGEX = /^https?:\/\/(?:www\.)?x\.com\/([^/]+)\/status\/(\d+)(?:[/?#].*)?$/i;
+const SUBSTACK_ARTICLE_REGEX = /^https?:\/\/[^/]+\.substack\.com\/p\/[A-Za-z0-9-_.]+/i;
 
 let activeTab = null;
+let activeContentType = null; // "substack" | "twitter" | null
 let queueDisabled = false;
 let statusTimer = null;
-let fogAnimationId = null;
-let fogBlobs = [];
+let rainContainer = null;
+const FALLBACK_RAIN_COUNT = 150;
 const defaultStatus = 'Ready when you are :)';
 
 if (statusLabel) {
@@ -176,79 +180,76 @@ async function refreshState() {
   renderReady(state.ready || []);
 }
 
-function initFogBackground() {
-  if (!fogCanvas || !fogCanvas.getContext) return;
-  const ctx = fogCanvas.getContext('2d');
-  if (!ctx) return;
 
-  const BASE = 'rgba(15, 23, 42, 0.9)';
-  const blobs = Array.from({ length: 6 }, () => ({
-    x: Math.random(),
-    y: Math.random(),
-    radius: 0.35 + Math.random() * 0.4,
-    dx: (Math.random() * 0.001 + 0.0002) * (Math.random() > 0.5 ? 1 : -1),
-    dy: (Math.random() * 0.001 + 0.0002) * (Math.random() > 0.5 ? 1 : -1),
-    shift: Math.random() * Math.PI * 2,
-  }));
-  fogBlobs = blobs;
-
-  const resize = () => {
-    const width = document.body.offsetWidth;
-    const height = document.body.offsetHeight;
-    const dpr = window.devicePixelRatio || 1;
-    fogCanvas.width = width * dpr;
-    fogCanvas.height = height * dpr;
-    fogCanvas.style.width = `${width}px`;
-    fogCanvas.style.height = `${height}px`;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  };
-
-  resize();
-  window.addEventListener('resize', resize);
-
-  const draw = (time) => {
-    const width = fogCanvas.width / (window.devicePixelRatio || 1);
-    const height = fogCanvas.height / (window.devicePixelRatio || 1);
-    ctx.clearRect(0, 0, width, height);
-    ctx.fillStyle = BASE;
-    ctx.fillRect(0, 0, width, height);
-
-    blobs.forEach((blob, index) => {
-      blob.x += blob.dx;
-      blob.y += blob.dy;
-
-      if (blob.x < -0.25 || blob.x > 1.25) blob.dx *= -1;
-      if (blob.y < -0.25 || blob.y > 1.25) blob.dy *= -1;
-
-      const cx = blob.x * width;
-      const cy = blob.y * height;
-      const radius = blob.radius * Math.max(width, height);
-
-      const pulse = 0.5 + 0.5 * Math.sin(time * 0.0005 + blob.shift);
-      const gradient = ctx.createRadialGradient(cx, cy, radius * 0.1, cx, cy, radius);
-      gradient.addColorStop(0, `rgba(235, 235, 235, ${0.1 + pulse * 0.2})`);
-      gradient.addColorStop(0.4, 'rgba(255, 240, 224, 0.1)');
-      gradient.addColorStop(1, 'rgba(255, 255, 255, 0.05)');
-
-      ctx.globalCompositeOperation = index === 0 ? 'source-over' : 'lighter';
-      ctx.fillStyle = gradient;
-      ctx.beginPath();
-      ctx.arc(cx, cy, radius, 0, Math.PI * 2);
-      ctx.fill();
-    });
-
-    fogAnimationId = requestAnimationFrame(draw);
-  };
-
-  if (fogAnimationId) {
-    cancelAnimationFrame(fogAnimationId);
+function disableQueue(message) {
+  queueDisabled = true;
+  queueButton.disabled = true;
+  if (filenameInput) {
+    filenameInput.value = '';
   }
-  fogAnimationId = requestAnimationFrame(draw);
+  setStatus(message);
+}
+
+function detectContentType(url) {
+  if (!url) {
+    return null;
+  }
+  if (TWITTER_THREAD_REGEX.test(url)) {
+    return 'twitter';
+  }
+  if (SUBSTACK_ARTICLE_REGEX.test(url)) {
+    return 'substack';
+  }
+  return null;
+}
+
+function getCookie(url, name) {
+  return new Promise((resolve) => {
+    chrome.cookies.get({ url, name }, (cookie) => {
+      if (chrome.runtime.lastError) {
+        console.warn('Cookie lookup failed', chrome.runtime.lastError.message);
+        resolve(null);
+        return;
+      }
+      resolve(cookie ? cookie.value : null);
+    });
+  });
+}
+
+async function prepareSubstackUI(url) {
+  queueDisabled = false;
+  queueButton.disabled = false;
+
+  const slug = slugify(url.split('/').pop() || 'substack-article');
+  filenameInput.value = `${slug}.md`;
+
+  const cookie = await getCookie(url, 'substack.sid');
+  setStatus(cookie ? defaultStatus : 'Without logging in, we can only download the public preview.');
+}
+
+async function prepareTwitterUI(url) {
+  queueDisabled = false;
+  queueButton.disabled = false;
+
+  const match = url.match(TWITTER_THREAD_REGEX);
+  const handle = match ? match[1] : 'thread';
+  const tweetId = match ? match[2] : 'tweet';
+  const slug = slugify(`${handle}-${tweetId}`) || 'twitter-thread';
+  filenameInput.value = `${slug}.md`;
+
+  const [authToken, ct0] = await Promise.all([
+    getCookie(url, 'auth_token'),
+    getCookie(url, 'ct0'),
+  ]);
+
+  if (authToken && ct0) {
+    setStatus(defaultStatus);
+  } else {
+    setStatus('Log in to X to capture subscriber-only threads.');
+  }
 }
 
 async function initialise() {
-  initFogBackground();
-
   activeTab = await new Promise((resolve) => {
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       resolve(tabs[0] || null);
@@ -257,36 +258,32 @@ async function initialise() {
 
   await refreshState();
 
-  if (!activeTab || !activeTab.url || !activeTab.url.includes('.substack.com')) {
-    queueDisabled = true;
-    queueButton.disabled = true;
-    setStatus('Open a Substack article to queue it.');
+  console.log("State refreshed")
+
+  const url = activeTab?.url || '';
+  activeContentType = detectContentType(url);
+
+  if (activeContentType === 'substack') {
+    await prepareSubstackUI(url);
     return;
   }
 
-  queueDisabled = false;
-  queueButton.disabled = false;
+  if (activeContentType === 'twitter') {
+    await prepareTwitterUI(url);
+    return;
+  }
 
-  const slug = slugify(activeTab.url.split('/').pop() || 'substack-article');
-  filenameInput.value = `${slug}.md`;
-
-  const cookie = await new Promise((resolve) => {
-    chrome.cookies.get({ url: activeTab.url, name: 'substack.sid' }, (result) => {
-      resolve(result);
-    });
-  });
-
-  setStatus(cookie ? defaultStatus : 'Without logging in, we can only download the public preview.');
+  disableQueue('nothing to download here!');
 }
 
 queueButton.addEventListener('click', async () => {
   if (queueDisabled) {
-    setStatus('Open a Substack article to queue it.');
+    setStatus('Open a supported page to queue it.');
     return;
   }
 
-  if (!activeTab || !activeTab.url) {
-    setStatus('Open a Substack article to queue it.');
+  if (!activeTab || !activeTab.url || !activeContentType) {
+    setStatus('Open a supported page to queue it.');
     return;
   }
 
@@ -311,16 +308,30 @@ queueButton.addEventListener('click', async () => {
   }
 
   queueButton.disabled = true;
-  setStatus('Adding article to queue…');
 
   try {
-    const slug = slugify(activeTab.url.split('/').pop() || 'substack-article');
-    const desired = normaliseFilename(filenameInput.value, `${slug}.md`);
-    await sendMessage({ type: 'enqueue', url: activeTab.url, filename: desired });
-    filenameInput.value = `${slug}.md`;
-    setStatus('Queued up download! Feel free to close this tab and add more :)');
+    if (activeContentType === 'substack') {
+      setStatus('Adding article to queue…');
+      const slug = slugify(activeTab.url.split('/').pop() || 'substack-article');
+      const desired = normaliseFilename(filenameInput.value, `${slug}.md`);
+      await sendMessage({ type: 'enqueue', url: activeTab.url, filename: desired, kind: 'substack' });
+      filenameInput.value = `${slug}.md`;
+      setStatus('Queued up download! Feel free to close this tab and add more :)');
+    } else if (activeContentType === 'twitter') {
+      setStatus('Adding thread to queue…');
+      const match = activeTab.url.match(TWITTER_THREAD_REGEX);
+      const handle = match ? match[1] : 'thread';
+      const tweetId = match ? match[2] : 'tweet';
+      const slug = slugify(`${handle}-${tweetId}`) || 'twitter-thread';
+      const desired = normaliseFilename(filenameInput.value, `${slug}.md`);
+      await sendMessage({ type: 'enqueue', url: activeTab.url, filename: desired, kind: 'twitter' });
+      filenameInput.value = `${slug}.md`;
+      setStatus('Thread queued! You can close this tab and add more.');
+    } else {
+      setStatus('Open a supported page to queue it.');
+    }
   } catch (error) {
-    setStatus(error.message || 'Failed to queue article.');
+    setStatus(error.message || 'Failed to queue item.');
   } finally {
     queueButton.disabled = queueDisabled;
   }
