@@ -1,4 +1,4 @@
-import { ContentType, contentTypes } from './contentTypes.js';
+import { ContentTypes, contentTypes } from './content-types.js';
 
 const STATE_KEY = 'markdownLoadState';
 const API_BASE_URL = 'http://127.0.0.1:8000';
@@ -8,6 +8,7 @@ const REQUEST_HEADERS = {
 };
 
 let processingQueue = false;
+const contentTypeByName = new Map(contentTypes.map((type) => [type.name, type]));
 
 async function getState() {
   const result = await chrome.storage.local.get(STATE_KEY);
@@ -60,9 +61,18 @@ async function handleMessage(message) {
   }
 }
 
+function detectContentType(url) {
+  return contentTypes.find((type) => type.regex.test(url)) || null;
+}
+
 async function enqueueItem({ url, filename, kind }) {
   if (!url) {
     throw new Error('Missing URL');
+  }
+
+  const detectedType = kind ? contentTypeByName.get(kind) : detectContentType(url);
+  if (!detectedType) {
+    throw new Error('Unsupported URL for conversion.');
   }
 
   const state = await getState();
@@ -71,7 +81,7 @@ async function enqueueItem({ url, filename, kind }) {
     id,
     url,
     filename,
-    kind: kind,
+    kind: detectedType.name,
     status: 'pending',
     addedAt: Date.now()
   });
@@ -180,7 +190,7 @@ async function processQueue() {
       await setState(state);
 
       try {
-        const markdown = await fetchMarkdown(item);
+        const markdown = await fetchMarkdownForItem(item);
         state = await getState();
         const queueIndex = state.queue.findIndex((entry) => entry.id === item.id);
         if (queueIndex !== -1) {
@@ -222,30 +232,44 @@ async function getCookies(url){
     chrome.cookies.getAll({ url }, (cookies) => {
       if (chrome.runtime.lastError) {
         console.warn('Cookie lookup failed', chrome.runtime.lastError.message);
-        resolve(null);
+        resolve([]);
         return;
       }
-      const cookieMap = {};
-      cookies.forEach((cookie) => {
-        cookieMap[cookie.name] = cookie.value;
-      });
-      resolve(cookieMap);
+      resolve(cookies || []);
     });
   });
 }
 
-async function fetchMarkdown(item, ContentType){
+async function fetchMarkdownForItem(item) {
+  const type = contentTypeByName.get(item.kind) || detectContentType(item.url);
+  if (!type) {
+    throw new Error('Unsupported URL for conversion.');
+  }
+
   const cookies = await getCookies(item.url);
+  console.log(cookies);
+  const lookup = Object.create(null);
+  for (const cookie of cookies) {
+    if (cookie?.name) {
+      lookup[cookie.name] = cookie.value;
+    }
+  }
+
+  const missing = (type.requiredCookies || []).filter((name) => !lookup[name]);
+  if (missing.length) {
+    throw new Error(`Log in to ${type.name} (missing ${missing.join(', ')}).`);
+  }
+
   const payload = {
     url: item.url,
     filename: item.filename,
-    cookies: cookies || {}
+    cookies : cookies,
   };
 
-  const response = await fetch(`${API_BASE_URL}${ContentType.endpoint}`, {
+  const response = await fetch(`${API_BASE_URL}/${type.endpoint}`, {
     method: 'POST',
     headers: REQUEST_HEADERS,
-    body: JSON.stringify(payload)
+    body: JSON.stringify(payload),
   });
 
   if (!response.ok) {
@@ -253,10 +277,8 @@ async function fetchMarkdown(item, ContentType){
   }
 
   return await response.text();
-
 }
 
-  
 
 async function buildError(response) {
   let detail = `HTTP ${response.status}`;
@@ -274,4 +296,3 @@ async function buildError(response) {
   }
   return new Error(detail);
 }
-

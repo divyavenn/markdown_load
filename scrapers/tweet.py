@@ -22,7 +22,7 @@ async def convert_tweet(url: str, cookies: dict[str, Any] | None = None) -> tupl
     parsed = urlparse(url)
     segments = [segment for segment in parsed.path.split("/") if segment]
     if len(segments) < 3 or segments[1] != "status":
-        raise SystemExit("Tweet URL must have the form https://x.com/<handle>/status/<id>")
+        raise ValueError("Tweet URL must have the form https://x.com/<handle>/status/<id>")
 
     handle = segments[0]
     root_id = segments[2]
@@ -30,7 +30,7 @@ async def convert_tweet(url: str, cookies: dict[str, Any] | None = None) -> tupl
     tweets = await get_thread(tweet_url=url, root_id=root_id, cookies=cookies)
 
     if not tweets:
-        raise SystemExit("No tweets captured. Check that the session is authenticated and the tweet exists.")
+        raise ValueError("No tweets captured. Check that the session is authenticated and the tweet exists.")
 
     lines: list[str] = [
         "# Thread Export",

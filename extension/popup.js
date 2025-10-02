@@ -1,3 +1,5 @@
+import { ContentTypes, contentTypes } from './content-types.js';
+
 const STATE_KEY = 'markdownLoadState';
 
 const queueList = document.getElementById('queue-list');
@@ -6,11 +8,8 @@ const filenameInput = document.getElementById('filename');
 const queueButton = document.getElementById('queue');
 const statusLabel = document.getElementById('status');
 
-import { ContentType, contentTypes } from './content-types.js';
-
-
 let activeTab = null;
-let activeContentType = null; // "substack" | "twitter" | null
+let activeContentType = null;
 let queueDisabled = false;
 let statusTimer = null;
 const defaultStatus = 'Ready when you are :)';
@@ -19,9 +18,36 @@ if (statusLabel) {
   statusLabel.textContent = defaultStatus;
 }
 
-function normaliseFilename(name) {
-  const cleaned = name.trim();
-  return cleaned.toLowerCase().endsWith('.md') ? cleaned : `${cleaned}.md`;
+function slugify(text) {
+  return (text || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'download';
+}
+
+function normaliseFilename(name, fallback) {
+  let cleaned = '';
+  if (typeof name === 'string') {
+    cleaned = name.trim();
+  } else if (name != null) {
+    cleaned = String(name).trim();
+  }
+
+  let base = cleaned;
+  if (!base) {
+    if (typeof fallback === 'string') {
+      base = fallback.trim();
+    } else if (fallback != null) {
+      base = String(fallback).trim();
+    }
+  }
+
+  if (!base) {
+    base = 'download';
+  }
+
+  const lower = base.toLowerCase();
+  return lower.endsWith('.md') ? base : `${base}.md`;
 }
 
 function setStatus(message) {
@@ -171,6 +197,19 @@ async function refreshState() {
 }
 
 
+async function getCookieValue(url, name) {
+  return new Promise((resolve) => {
+    chrome.cookies.get({ url, name }, (cookie) => {
+      if (chrome.runtime.lastError) {
+        console.warn('Cookie lookup failed', chrome.runtime.lastError.message);
+        resolve(null);
+        return;
+      }
+      resolve(cookie ? cookie.value : null);
+    });
+  });
+}
+
 function disableQueue(message) {
   queueDisabled = true;
   queueButton.disabled = true;
@@ -180,16 +219,65 @@ function disableQueue(message) {
   setStatus(message);
 }
 
-function detectContentType(url) {
-  for (const i in contentTypes) {
-    if (contentTypes[i].regex.test(url)) {
-      return contentTypes[i];
+
+async function prepareUI(url, activeContentType) {
+  for (const cookie of activeContentType.requiredCookies) {
+    const value = await getCookieValue(url, cookie);
+    if (!value) {
+      disableQueue(activeContentType.errorMessage || 'Required cookies not found. Unable to queue this page.');
+      return;
     }
   }
-  return null;
+  let slug = "download.md";
+    switch (activeContentType.name) {
+      case 'substack':
+        slug = suggestSubstackFilename(url);
+        break;
+      case 'twitter':
+        slug = suggestTweetFilename(url);
+        break;
+    }
+    const fname = normaliseFilename(filenameInput.value, slug);
+    if (!filenameInput.value.trim()) {
+        filenameInput.value = normaliseFilename('', fname);
+    }
+    await sendMessage({
+      type: 'enqueue',
+      url: activeTab.url,
+      filename: fname,
+      kind: activeContentType.name,
+    });
+    setStatus('Queued up download! Feel free to close this tab and add more :)');
+}
+
+function suggestSubstackFilename(url) {
+  const slug = slugify(url.split('/').pop() || 'substack-article');
+  return `${slug}.md`;
 }
 
 
+function suggestTweetFilename(url) {
+  const match = url.match(ContentTypes.TWITTER.regex);
+  const handle = match ? match[1] : 'thread';
+  const tweetId = match ? match[2] : 'tweet';
+  const slug = slugify(`${handle}-${tweetId}`);
+  return `${slug}.md`;
+}
+
+
+function detectContentType(url) {
+  return contentTypes.find((type) => type.regex.test(url)) || null;
+}
+
+async function prepareForContentType(type, url) {
+  try {
+    await prepareUI(url, type);
+  } catch (error) {
+    console.warn('Preparation failed', error);
+    disableQueue('Unable to prepare this page for download.');
+    throw error;
+  }
+}
 
 async function initialise() {
   activeTab = await new Promise((resolve) => {
@@ -200,28 +288,29 @@ async function initialise() {
 
   await refreshState();
 
-  console.log("State refreshed")
-
   const url = activeTab?.url || '';
   activeContentType = detectContentType(url);
-  queueDisabled = false;
-  queueButton.disabled = false;
-  activeContentType.handler(url);
 
   if (!activeContentType) {
     disableQueue('nothing to download here!');
+    return;
   }
 
+  try {
+    await prepareForContentType(activeContentType, url);
+  } catch (_err) {
+    return;
+  }
 }
 
 queueButton.addEventListener('click', async () => {
   if (queueDisabled) {
-    setStatus('Open a supported page to queue it.');
+    setStatus('nothing to download here!');
     return;
   }
 
   if (!activeTab || !activeTab.url || !activeContentType) {
-    setStatus('Open a supported page to queue it.');
+    setStatus('nothing to download here!');
     return;
   }
 
@@ -241,29 +330,19 @@ queueButton.addEventListener('click', async () => {
   }
 
   if (alreadyReady) {
-    setStatus('lready ready to download!');
+    setStatus('aleady ready to download!');
     return;
   }
 
   queueButton.disabled = true;
   
-  if (activeContentType) {
-    try {
-      queueButton.disabled = true;
-      setStatus('Adding article to queue…')
-      const slug = activeContentType.fileNameGenerator(activeTab.url);
-      const fileName = normaliseFilename(`${slug}.md`);
-      filenameInput.value = fileName;
-      await sendMessage({ type: 'enqueue', url: activeTab.url, filename: fileName, kind: activeContentType.name });
-      setStatus('Queued up download! Feel free to close this tab and add more :)')
-    } catch (error) {
-      setStatus(error.message || 'Failed to queue item.');
-    } finally {
-      queueButton.disabled = false;
-    }
-  } else {
-    setStatus('Open a supported page to queue it.');
-    queueButton.disabled = true;
+
+  try {
+    await prepareForContentType(activeContentType, activeTab.url);
+  } catch (error) {
+    setStatus(error.message || 'Failed to queue item.');
+  } finally {
+    queueButton.disabled = false;
   }
 });
 
