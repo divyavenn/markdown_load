@@ -41,15 +41,19 @@ function getCookie(url, name) {
   });
 }
 
+function slugify(text) {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'substack-article';
+}
+
 export async function substackFileName(url){
   const slug = slugify(url.split('/').pop() || 'substack-article');
-  filenameInput.value = `${slug}.md`;
+  return `${slug}.md`;
 }
 
 export async function prepareSubstackUI(url) {
-  queueDisabled = false;
-  queueButton.disabled = false;
-
   const cookie = await getCookie(url, 'substack.sid');
   setStatus(cookie ? defaultStatus : 'Without logging in, we can only download the public preview.');
 }
@@ -59,14 +63,10 @@ export async function tweetFileName(url){
   const handle = match ? match[1] : 'thread';
   const tweetId = match ? match[2] : 'tweet';
   const slug = slugify(`${handle}-${tweetId}`) || 'twitter-thread';
-  filenameInput.value = `${slug}.md`;
+  return `${slug}.md`;
 }
 
 export async function prepareTwitterUI(url) {
-  queueDisabled = false;
-  queueButton.disabled = false;
-
-
   const [authToken, ct0] = await Promise.all([
     getCookie(url, 'auth_token'),
     getCookie(url, 'ct0'),
@@ -81,6 +81,6 @@ export async function prepareTwitterUI(url) {
 
 
 export const contentTypes = [
-  new ContentType('twitter', TWITTER_THREAD_REGEX, prepareTwitterUI, '/convert-twitter'),
+  new ContentType('twitter', TWITTER_THREAD_REGEX, prepareTwitterUI, '/convert-tweet'),
   new ContentType('substack', SUBSTACK_ARTICLE_REGEX, prepareSubstackUI, '/convert-substack'),
 ]

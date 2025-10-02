@@ -14,10 +14,8 @@ from scrapers.tweet import convert_tweet, slugify
 
 class ConvertRequest(BaseModel):
     url: HttpUrl
-    substack_sid: str | None = None
     filename: str | None = None
-    auth_token: str | None = None
-    ct0: str | None = None
+    cookies: dict[str, Any] = {}
 
 
 app = FastAPI(title="Markdown.load API", version="0.1.0")
@@ -35,8 +33,7 @@ app.add_middleware(
 async def download_tweet(payload: ConvertRequest) -> Response:
     url = str(payload.url)
     storage_state = payload.cookies
-    print (storage_state)
-
+    
     if not storage_state.get("auth_token") or not storage_state.get("ct0"):
         raise HTTPException(status_code=400, detail="Both twitter_auth_token and twitter_ct0 cookies are required")
 

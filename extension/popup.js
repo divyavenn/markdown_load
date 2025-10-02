@@ -19,13 +19,6 @@ if (statusLabel) {
   statusLabel.textContent = defaultStatus;
 }
 
-function slugify(text) {
-  return text
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '') || 'substack-article';
-}
-
 function normaliseFilename(name) {
   const cleaned = name.trim();
   return cleaned.toLowerCase().endsWith('.md') ? cleaned : `${cleaned}.md`;
@@ -188,9 +181,9 @@ function disableQueue(message) {
 }
 
 function detectContentType(url) {
-  for (const type in contentTypes) {
-    if (type.regex.test(url)) {
-      return type;
+  for (const i in contentTypes) {
+    if (contentTypes[i].regex.test(url)) {
+      return contentTypes[i];
     }
   }
   return null;
@@ -211,6 +204,8 @@ async function initialise() {
 
   const url = activeTab?.url || '';
   activeContentType = detectContentType(url);
+  queueDisabled = false;
+  queueButton.disabled = false;
   activeContentType.handler(url);
 
   if (!activeContentType) {

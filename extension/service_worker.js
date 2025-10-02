@@ -1,4 +1,4 @@
-import { ContentType, contentTypes } from './content-types.js';
+import { ContentType, contentTypes } from './contentTypes.js';
 
 const STATE_KEY = 'markdownLoadState';
 const API_BASE_URL = 'http://127.0.0.1:8000';
@@ -180,7 +180,7 @@ async function processQueue() {
       await setState(state);
 
       try {
-        const markdown = await fetchMarkdownForItem(item);
+        const markdown = await fetchMarkdown(item);
         state = await getState();
         const queueIndex = state.queue.findIndex((entry) => entry.id === item.id);
         if (queueIndex !== -1) {
@@ -242,7 +242,7 @@ async function fetchMarkdown(item, ContentType){
     cookies: cookies || {}
   };
 
-  const response = await fetch(`${API_BASE_URL}/${ContentType.endpoint}`, {
+  const response = await fetch(`${API_BASE_URL}${ContentType.endpoint}`, {
     method: 'POST',
     headers: REQUEST_HEADERS,
     body: JSON.stringify(payload)
