@@ -1,3 +1,5 @@
+import { ContentType, contentTypes } from './content-types.js';
+
 const STATE_KEY = 'markdownLoadState';
 const API_BASE_URL = 'http://127.0.0.1:8000';
 const REQUEST_HEADERS = {
@@ -213,63 +215,34 @@ async function processQueue() {
   }
 }
 
-async function fetchMarkdownForItem(item) {
-  if (item.kind === 'twitter') {
-    return fetchTwitterMarkdown(item);
-  }
-  return fetchSubstackMarkdown(item);
-}
 
-function getSubstackCookie(url) {
+
+async function getCookies(url){
   return new Promise((resolve) => {
-    chrome.cookies.get({ url, name: 'substack.sid' }, (cookie) => {
+    chrome.cookies.getAll({ url }, (cookies) => {
       if (chrome.runtime.lastError) {
         console.warn('Cookie lookup failed', chrome.runtime.lastError.message);
         resolve(null);
         return;
       }
-      resolve(cookie ? cookie.value : null);
+      const cookieMap = {};
+      cookies.forEach((cookie) => {
+        cookieMap[cookie.name] = cookie.value;
+      });
+      resolve(cookieMap);
     });
   });
 }
 
-async function fetchSubstackMarkdown(item) {
-  const cookie = await getSubstackCookie(item.url);
-  const payload = {
-    url: item.url,
-    filename: item.filename
-  };
-  if (cookie) {
-    payload.substack_sid = cookie;
-  }
-
-  const response = await fetch(`${API_BASE_URL}/convert-substack`, {
-    method: 'POST',
-    headers: REQUEST_HEADERS,
-    body: JSON.stringify(payload)
-  });
-
-  if (!response.ok) {
-    throw await buildError(response);
-  }
-
-  return await response.text();
-}
-
-async function fetchTwitterMarkdown(item) {
-  const cookies = await getTwitterCookies(item.url);
-  if (!cookies.auth_token || !cookies.ct0) {
-    throw new Error('Log into X.com and try again.');
-  }
-
+async function fetchMarkdown(item, ContentType){
+  const cookies = await getCookies(item.url);
   const payload = {
     url: item.url,
     filename: item.filename,
-    auth_token: cookies.auth_token,
-    ct0: cookies.ct0
+    cookies: cookies || {}
   };
 
-  const response = await fetch(`${API_BASE_URL}/convert-tweet`, {
+  const response = await fetch(`${API_BASE_URL}/${ContentType.endpoint}`, {
     method: 'POST',
     headers: REQUEST_HEADERS,
     body: JSON.stringify(payload)
@@ -280,7 +253,10 @@ async function fetchTwitterMarkdown(item) {
   }
 
   return await response.text();
+
 }
+
+  
 
 async function buildError(response) {
   let detail = `HTTP ${response.status}`;
@@ -299,23 +275,3 @@ async function buildError(response) {
   return new Error(detail);
 }
 
-function getCookieValue(url, name) {
-  return new Promise((resolve) => {
-    chrome.cookies.get({ url, name }, (cookie) => {
-      if (chrome.runtime.lastError) {
-        console.warn('Cookie lookup failed', chrome.runtime.lastError.message);
-        resolve(null);
-        return;
-      }
-      resolve(cookie ? cookie.value : null);
-    });
-  });
-}
-
-async function getTwitterCookies(url) {
-  const [authToken, ct0] = await Promise.all([
-    getCookieValue(url, 'auth_token'),
-    getCookieValue(url, 'ct0')
-  ]);
-  return { auth_token: authToken, ct0 };
-}

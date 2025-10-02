@@ -6,16 +6,13 @@ const filenameInput = document.getElementById('filename');
 const queueButton = document.getElementById('queue');
 const statusLabel = document.getElementById('status');
 
+import { ContentType, contentTypes } from './content-types.js';
 
-const TWITTER_THREAD_REGEX = /^https?:\/\/(?:www\.)?x\.com\/([^/]+)\/status\/(\d+)(?:[/?#].*)?$/i;
-const SUBSTACK_ARTICLE_REGEX = /^https?:\/\/[^/]+\.substack\.com\/p\/[A-Za-z0-9-_.]+/i;
 
 let activeTab = null;
 let activeContentType = null; // "substack" | "twitter" | null
 let queueDisabled = false;
 let statusTimer = null;
-let rainContainer = null;
-const FALLBACK_RAIN_COUNT = 150;
 const defaultStatus = 'Ready when you are :)';
 
 if (statusLabel) {
@@ -29,8 +26,8 @@ function slugify(text) {
     .replace(/^-+|-+$/g, '') || 'substack-article';
 }
 
-function normaliseFilename(name, fallback) {
-  const cleaned = name.trim() || fallback;
+function normaliseFilename(name) {
+  const cleaned = name.trim();
   return cleaned.toLowerCase().endsWith('.md') ? cleaned : `${cleaned}.md`;
 }
 
@@ -191,63 +188,15 @@ function disableQueue(message) {
 }
 
 function detectContentType(url) {
-  if (!url) {
-    return null;
-  }
-  if (TWITTER_THREAD_REGEX.test(url)) {
-    return 'twitter';
-  }
-  if (SUBSTACK_ARTICLE_REGEX.test(url)) {
-    return 'substack';
+  for (const type in contentTypes) {
+    if (type.regex.test(url)) {
+      return type;
+    }
   }
   return null;
 }
 
-function getCookie(url, name) {
-  return new Promise((resolve) => {
-    chrome.cookies.get({ url, name }, (cookie) => {
-      if (chrome.runtime.lastError) {
-        console.warn('Cookie lookup failed', chrome.runtime.lastError.message);
-        resolve(null);
-        return;
-      }
-      resolve(cookie ? cookie.value : null);
-    });
-  });
-}
 
-async function prepareSubstackUI(url) {
-  queueDisabled = false;
-  queueButton.disabled = false;
-
-  const slug = slugify(url.split('/').pop() || 'substack-article');
-  filenameInput.value = `${slug}.md`;
-
-  const cookie = await getCookie(url, 'substack.sid');
-  setStatus(cookie ? defaultStatus : 'Without logging in, we can only download the public preview.');
-}
-
-async function prepareTwitterUI(url) {
-  queueDisabled = false;
-  queueButton.disabled = false;
-
-  const match = url.match(TWITTER_THREAD_REGEX);
-  const handle = match ? match[1] : 'thread';
-  const tweetId = match ? match[2] : 'tweet';
-  const slug = slugify(`${handle}-${tweetId}`) || 'twitter-thread';
-  filenameInput.value = `${slug}.md`;
-
-  const [authToken, ct0] = await Promise.all([
-    getCookie(url, 'auth_token'),
-    getCookie(url, 'ct0'),
-  ]);
-
-  if (authToken && ct0) {
-    setStatus(defaultStatus);
-  } else {
-    setStatus('Log in to X to capture subscriber-only threads.');
-  }
-}
 
 async function initialise() {
   activeTab = await new Promise((resolve) => {
@@ -262,18 +211,12 @@ async function initialise() {
 
   const url = activeTab?.url || '';
   activeContentType = detectContentType(url);
+  activeContentType.handler(url);
 
-  if (activeContentType === 'substack') {
-    await prepareSubstackUI(url);
-    return;
+  if (!activeContentType) {
+    disableQueue('nothing to download here!');
   }
 
-  if (activeContentType === 'twitter') {
-    await prepareTwitterUI(url);
-    return;
-  }
-
-  disableQueue('nothing to download here!');
 }
 
 queueButton.addEventListener('click', async () => {
@@ -298,42 +241,34 @@ queueButton.addEventListener('click', async () => {
   const alreadyReady = (state.ready || []).some((item) => item.url === currentUrl);
 
   if (alreadyQueued) {
-    setStatus('This article is already queued.');
+    setStatus('already queued!');
     return;
   }
 
   if (alreadyReady) {
-    setStatus('This article is already ready to download.');
+    setStatus('lready ready to download!');
     return;
   }
 
   queueButton.disabled = true;
-
-  try {
-    if (activeContentType === 'substack') {
-      setStatus('Adding article to queue…');
-      const slug = slugify(activeTab.url.split('/').pop() || 'substack-article');
-      const desired = normaliseFilename(filenameInput.value, `${slug}.md`);
-      await sendMessage({ type: 'enqueue', url: activeTab.url, filename: desired, kind: 'substack' });
-      filenameInput.value = `${slug}.md`;
-      setStatus('Queued up download! Feel free to close this tab and add more :)');
-    } else if (activeContentType === 'twitter') {
-      setStatus('Adding thread to queue…');
-      const match = activeTab.url.match(TWITTER_THREAD_REGEX);
-      const handle = match ? match[1] : 'thread';
-      const tweetId = match ? match[2] : 'tweet';
-      const slug = slugify(`${handle}-${tweetId}`) || 'twitter-thread';
-      const desired = normaliseFilename(filenameInput.value, `${slug}.md`);
-      await sendMessage({ type: 'enqueue', url: activeTab.url, filename: desired, kind: 'twitter' });
-      filenameInput.value = `${slug}.md`;
-      setStatus('Thread queued! You can close this tab and add more.');
-    } else {
-      setStatus('Open a supported page to queue it.');
+  
+  if (activeContentType) {
+    try {
+      queueButton.disabled = true;
+      setStatus('Adding article to queue…')
+      const slug = activeContentType.fileNameGenerator(activeTab.url);
+      const fileName = normaliseFilename(`${slug}.md`);
+      filenameInput.value = fileName;
+      await sendMessage({ type: 'enqueue', url: activeTab.url, filename: fileName, kind: activeContentType.name });
+      setStatus('Queued up download! Feel free to close this tab and add more :)')
+    } catch (error) {
+      setStatus(error.message || 'Failed to queue item.');
+    } finally {
+      queueButton.disabled = false;
     }
-  } catch (error) {
-    setStatus(error.message || 'Failed to queue item.');
-  } finally {
-    queueButton.disabled = queueDisabled;
+  } else {
+    setStatus('Open a supported page to queue it.');
+    queueButton.disabled = true;
   }
 });
 
