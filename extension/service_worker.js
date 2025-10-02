@@ -71,7 +71,7 @@ async function enqueueItem({ url, filename, kind }) {
     id,
     url,
     filename,
-    kind: kind || 'substack',
+    kind: kind,
     status: 'pending',
     addedAt: Date.now()
   });

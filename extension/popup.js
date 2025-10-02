@@ -143,7 +143,7 @@ async function handleRetry(id) {
 async function handleRemove(id) {
   try {
     await sendMessage({ type: 'removeQueue', id });
-    setStatus('Removed from queue.');
+    setStatus('removed from queue');
   } catch (error) {
     setStatus(error.message || 'Remove failed.');
   }
@@ -152,7 +152,7 @@ async function handleRemove(id) {
 async function handleDownload(id) {
   try {
     await sendMessage({ type: 'downloadReady', id });
-    setStatus('Download started');
+    setStatus('downloading');
   } catch (error) {
     setStatus(error.message || 'Download failed.');
   }
@@ -161,7 +161,7 @@ async function handleDownload(id) {
 async function handleRemoveReady(id) {
   try {
     await sendMessage({ type: 'removeReady', id });
-    setStatus('Removed from downloads.');
+    setStatus('removed download');
   } catch (error) {
     setStatus(error.message || 'Remove failed.');
   }

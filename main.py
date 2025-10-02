@@ -30,56 +30,15 @@ app.add_middleware(
 )
 
 
-def format_cookies_twitter(cookies: dict[str, str]) -> dict[str, Any]:
-    formatted: list[dict[str, Any]] = []
-
-    for name, value in cookies.items():
-        if not value:
-            continue
-
-        entry = {
-            "name": name,
-            "value": value,
-            "domain": ".x.com",
-            "path": "/",
-            "secure": True,
-        }
-
-        if name == "auth_token":
-            entry["httpOnly"] = True
-            entry["sameSite"] = "None"
-        elif name == "ct0":
-            entry["httpOnly"] = False
-            entry["sameSite"] = "Lax"
-        else:
-            entry["httpOnly"] = False
-            entry["sameSite"] = "Lax"
-
-        formatted.append(entry)
-
-    return {
-        "cookies": formatted,
-        "origins": [
-        {
-            "origin": "https://x.com",
-            "localStorage": [
-                {"name": "__cuid", "value": "2e3070e784c04ad19d8eac5ab6f232c2"},
-            ],
-        },
-    ]
-    }
-
 
 @app.post("/convert-tweet", response_class=Response)
 async def download_tweet(payload: ConvertRequest) -> Response:
     url = str(payload.url)
-    auth_token = (payload.auth_token or "").strip()
-    ct0 = (payload.ct0 or "").strip()
+    storage_state = payload.cookies
+    print (storage_state)
 
-    if not auth_token or not ct0:
+    if not storage_state.get("auth_token") or not storage_state.get("ct0"):
         raise HTTPException(status_code=400, detail="Both twitter_auth_token and twitter_ct0 cookies are required")
-
-    storage_state = format_cookies_twitter({"auth_token": auth_token, "ct0": ct0})
 
     try:
         markdown, handle, root_id = await convert_tweet(url=url, cookies=storage_state)
@@ -102,12 +61,15 @@ async def download_tweet(payload: ConvertRequest) -> Response:
 @app.post("/convert-substack", response_class=Response)
 async def download_substack(payload: ConvertRequest) -> Response:
     url = str(payload.url)
-    cookie_value = (payload.substack_sid or "").strip()
+    storage_state = payload.cookies
+    print (storage_state)
 
-    cookies = {"substack.sid": cookie_value} if cookie_value else {}
+    if not storage_state.get("substack_sid"):
+        raise HTTPException(status_code=400, detail="substack_sid cookie is required")
+
 
     try:
-        html = fetch_html(url, cookies=cookies)
+        html = fetch_html(url, cookies=storage_state)
         markdown, metadata = convert_html_to_markdown(html, url)
     except requests.HTTPError as exc:  # network / Substack failure
         raise HTTPException(status_code=exc.response.status_code if exc.response else 502,
