@@ -61,27 +61,19 @@ async function handleMessage(message) {
   }
 }
 
-function detectContentType(url) {
-  return contentTypes.find((type) => type.regex.test(url)) || null;
-}
 
-async function enqueueItem({ url, filename, kind }) {
+async function enqueueItem({ type, url, cookies, contentType, filename}) {
   if (!url) {
     throw new Error('Missing URL');
   }
-
-  const detectedType = kind ? contentTypeByName.get(kind) : detectContentType(url);
-  if (!detectedType) {
-    throw new Error('Unsupported URL for conversion.');
-  }
-
   const state = await getState();
   const id = createId();
   state.queue.push({
     id,
     url,
+    contentType,
+    cookies, 
     filename,
-    kind: detectedType.name,
     status: 'pending',
     addedAt: Date.now()
   });
@@ -226,47 +218,16 @@ async function processQueue() {
 }
 
 
-
-async function getCookies(url){
-  return new Promise((resolve) => {
-    chrome.cookies.getAll({ url }, (cookies) => {
-      if (chrome.runtime.lastError) {
-        console.warn('Cookie lookup failed', chrome.runtime.lastError.message);
-        resolve([]);
-        return;
-      }
-      resolve(cookies || []);
-    });
-  });
-}
-
 async function fetchMarkdownForItem(item) {
-  const type = contentTypeByName.get(item.kind) || detectContentType(item.url);
-  if (!type) {
-    throw new Error('Unsupported URL for conversion.');
-  }
-
-  const cookies = await getCookies(item.url);
-  console.log(cookies);
-  const lookup = Object.create(null);
-  for (const cookie of cookies) {
-    if (cookie?.name) {
-      lookup[cookie.name] = cookie.value;
-    }
-  }
-
-  const missing = (type.requiredCookies || []).filter((name) => !lookup[name]);
-  if (missing.length) {
-    throw new Error(`Log in to ${type.name} (missing ${missing.join(', ')}).`);
-  }
-
   const payload = {
     url: item.url,
     filename: item.filename,
-    cookies : cookies,
+    cookies : item.cookies,
   };
 
-  const response = await fetch(`${API_BASE_URL}/${type.endpoint}`, {
+  console.log(item.contentType);
+
+  const response = await fetch(`${API_BASE_URL}/${item.contentType.endpoint}`, {
     method: 'POST',
     headers: REQUEST_HEADERS,
     body: JSON.stringify(payload),

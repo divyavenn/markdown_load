@@ -1,5 +1,5 @@
 export const TWITTER_THREAD_REGEX = /^https?:\/\/(?:www\.)?x\.com\/([^/]+)\/status\/(\d+)(?:[/?#].*)?$/i;
-export const SUBSTACK_ARTICLE_REGEX = /^https?:\/\/[^/]+\.substack\.com\/p\/[A-Za-z0-9-_.]+/i;
+export const SUBSTACK_ARTICLE_REGEX = /^https?:\/\/(?:[^/]+\.substack\.com|[^/]+\.[^/]+)\/p\/[A-Za-z0-9-_.]+(?:[?#].*)?$/i;
 
 export const ContentTypes = Object.freeze({
   TWITTER: {

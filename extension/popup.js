@@ -12,6 +12,8 @@ let activeTab = null;
 let activeContentType = null;
 let queueDisabled = false;
 let statusTimer = null;
+let activeCookieLookup = {};
+let activeCookieUrl = null;
 const defaultStatus = 'Ready when you are :)';
 
 if (statusLabel) {
@@ -210,6 +212,27 @@ async function getCookieValue(url, name) {
   });
 }
 
+async function getAllCookies(url) {
+  return new Promise((resolve) => {
+    chrome.cookies.getAll({ url }, (cookies) => {
+      if (chrome.runtime.lastError) {
+        console.warn('Cookie lookup failed', chrome.runtime.lastError.message);
+        resolve({});
+        return;
+      }
+
+      const lookup = Object.create(null);
+      for (const cookie of cookies || []) {
+        if (cookie?.name && cookie.value !== undefined) {
+          lookup[cookie.name] = cookie.value;
+        }
+      }
+
+      resolve(lookup);
+    });
+  });
+}
+
 function disableQueue(message) {
   queueDisabled = true;
   queueButton.disabled = true;
@@ -218,36 +241,40 @@ function disableQueue(message) {
   }
   setStatus(message);
 }
-
-
 async function prepareUI(url, activeContentType) {
-  for (const cookie of activeContentType.requiredCookies) {
-    const value = await getCookieValue(url, cookie);
-    if (!value) {
-      disableQueue(activeContentType.errorMessage || 'Required cookies not found. Unable to queue this page.');
-      return;
+  const required = activeContentType.requiredCookies || [];
+  let lookup = {};
+
+  // get cookies again in case tab is refreshed or user signed out.
+  if (activeCookieUrl === url && activeCookieLookup && Object.keys(activeCookieLookup).length) {
+    lookup = { ...activeCookieLookup };
+  } else {
+    const allCookies = await getAllCookies(url);
+    for (const name of required) {
+      const value = allCookies[name];
+      if (value) {
+        lookup[name] = value;
+      }
     }
+    activeCookieLookup = lookup;
+    activeCookieUrl = url;
   }
-  let slug = "download.md";
-    switch (activeContentType.name) {
-      case 'substack':
-        slug = suggestSubstackFilename(url);
-        break;
-      case 'twitter':
-        slug = suggestTweetFilename(url);
-        break;
-    }
-    const fname = normaliseFilename(filenameInput.value, slug);
-    if (!filenameInput.value.trim()) {
-        filenameInput.value = normaliseFilename('', fname);
-    }
-    await sendMessage({
-      type: 'enqueue',
-      url: activeTab.url,
-      filename: fname,
-      kind: activeContentType.name,
-    });
-    setStatus('Queued up download! Feel free to close this tab and add more :)');
+
+  const missing = required.filter((cookie) => !lookup[cookie]);
+
+  if (missing.length) {
+    disableQueue(activeContentType.errorMessage || 'Required cookies not found. Unable to queue this page.');
+    return;
+  }
+
+  await sendMessage({
+    type: 'enqueue',
+    url: activeTab.url,
+    cookies: lookup,
+    contentType: activeContentType,
+    filename: filenameInput.value,
+  });
+  setStatus('Queued up download! Feel free to close this tab and add more :)');
 }
 
 function suggestSubstackFilename(url) {
@@ -263,11 +290,31 @@ function suggestTweetFilename(url) {
   const slug = slugify(`${handle}-${tweetId}`);
   return `${slug}.md`;
 }
+async function detectContentType(url) {
+  const allCookies = await getAllCookies(url);
+  console.log(allCookies);
+  let neededCookies = {};
+  for (const type of contentTypes) {
+    let missingCookie = false;
+    const required = type.requiredCookies || [];
 
+    for (const name of required) {
+      const value = allCookies[name];
+      console.log(name, value);
+      if (!value) {
+        neededCookies = {};
+        missingCookie = true; 
+        break;
+      }
+      neededCookies[name] = value;
+    }
 
-function detectContentType(url) {
-  return contentTypes.find((type) => type.regex.test(url)) || null;
+    if (!missingCookie) return [type, neededCookies];
+  }
+
+  return [null, {}];
 }
+
 
 async function prepareForContentType(type, url) {
   try {
@@ -288,22 +335,43 @@ async function initialise() {
 
   await refreshState();
 
+  console.log("initializing")
+
   const url = activeTab?.url || '';
-  activeContentType = detectContentType(url);
+  [activeContentType, activeCookieLookup] = await detectContentType(url);
+  activeCookieUrl = url;
 
   if (!activeContentType) {
     disableQueue('nothing to download here!');
     return;
   }
 
-  try {
-    await prepareForContentType(activeContentType, url);
-  } catch (_err) {
-    return;
-  }
+  queueDisabled = false;
+  queueButton.disabled = false;
+
+  let slug = "download.md";
+    switch (activeContentType.name) {
+      case 'substack':
+        slug = suggestSubstackFilename(url);
+        break;
+      case 'twitter':
+        slug = suggestTweetFilename(url);
+        break;
+    }
+    const fname = normaliseFilename(filenameInput.value, slug);
+    if (!filenameInput.value.trim()) {
+        filenameInput.value = normaliseFilename('', fname);
+    }
+  return;
 }
 
 queueButton.addEventListener('click', async () => {
+  const state = await new Promise((resolve) => {
+    chrome.storage.local.get(STATE_KEY, (result) => {
+      resolve(result[STATE_KEY] || { queue: [], ready: [] });
+    });
+  });
+
   if (queueDisabled) {
     setStatus('nothing to download here!');
     return;
@@ -313,12 +381,6 @@ queueButton.addEventListener('click', async () => {
     setStatus('nothing to download here!');
     return;
   }
-
-  const state = await new Promise((resolve) => {
-    chrome.storage.local.get(STATE_KEY, (result) => {
-      resolve(result[STATE_KEY] || { queue: [], ready: [] });
-    });
-  });
 
   const currentUrl = activeTab.url;
   const alreadyQueued = (state.queue || []).some((item) => item.url === currentUrl);
@@ -335,7 +397,6 @@ queueButton.addEventListener('click', async () => {
   }
 
   queueButton.disabled = true;
-  
 
   try {
     await prepareForContentType(activeContentType, activeTab.url);
@@ -346,7 +407,7 @@ queueButton.addEventListener('click', async () => {
   }
 });
 
-chrome.storage.onChanged.addListener((changes, areaName) => {
+  chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName !== 'local' || !changes[STATE_KEY]) {
     return;
   }
@@ -354,5 +415,6 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
   renderQueue(next.queue || []);
   renderReady(next.ready || []);
 });
+
 
 initialise();

@@ -15,20 +15,18 @@ from scrapers.tweet import convert_tweet, slugify
 class ConvertRequest(BaseModel):
     url: HttpUrl
     filename: str | None = None
-    cookies: list[dict[str, Any]] = Field(default_factory=list)
+    cookies: dict[str, Any] = Field(default_factory=dict)
 
 
-def cookies_to_lookup(cookies: list[dict[str, Any]]) -> dict[str, str]:
-    lookup: dict[str, str] = {}
-    for cookie in cookies:
-        name = cookie.get('name')
-        value = cookie.get('value')
-        if name and value is not None:
-            lookup[name] = str(value)
-    return lookup
+def cookies_to_lookup(cookies: dict[str, Any]) -> dict[str, str]:
+    return {
+        str(name): str(value)
+        for name, value in cookies.items()
+        if value is not None
+    }
 
 
-def cookies_to_storage_state(cookies: list[dict[str, Any]]) -> dict[str, Any]:
+def cookies_to_storage_state(cookies: dict[str, str]) -> dict[str, Any]:
     same_site_map = {
         'no_restriction': 'None',
         'none': 'None',
@@ -37,36 +35,30 @@ def cookies_to_storage_state(cookies: list[dict[str, Any]]) -> dict[str, Any]:
         'strict': 'Strict',
     }
 
-    playwright_cookies: list[dict[str, Any]] = []
-    for cookie in cookies:
-        name = cookie.get('name')
-        value = cookie.get('value')
-        domain = cookie.get('domain')
-        if not name or value is None or not domain:
-            continue
-
-        same_site_raw = cookie.get('sameSite')
-        same_site = None
-        if same_site_raw is not None:
-            same_site = same_site_map.get(str(same_site_raw).lower())
-
-        expires = cookie.get('expirationDate') or cookie.get('expires')
-
+    def build_cookie(name: str, http_only: bool) -> dict[str, Any]:
         state_cookie: dict[str, Any] = {
             'name': name,
-            'value': str(value),
-            'domain': domain,
-            'path': cookie.get('path', '/'),
-            'secure': bool(cookie.get('secure')),
-            'httpOnly': bool(cookie.get('httpOnly')),
+            'value': cookies[name],
+            'domain': '.x.com',
+            'path': '/',
+            'secure': True,
+            'httpOnly': http_only,
         }
+        same_site_raw = cookies.get(f'{name}_same_site')
+        if same_site_raw:
+            same_site = same_site_map.get(str(same_site_raw).lower())
+            if same_site:
+                state_cookie['sameSite'] = same_site
+        expires_raw = cookies.get(f'{name}_expires')
+        if expires_raw:
+            state_cookie['expires'] = expires_raw
+        return state_cookie
 
-        if same_site:
-            state_cookie['sameSite'] = same_site
-        if expires:
-            state_cookie['expires'] = expires
-
-        playwright_cookies.append(state_cookie)
+    playwright_cookies: list[dict[str, Any]] = []
+    if 'auth_token' in cookies:
+        playwright_cookies.append(build_cookie('auth_token', http_only=True))
+    if 'ct0' in cookies:
+        playwright_cookies.append(build_cookie('ct0', http_only=False))
 
     return {'cookies': playwright_cookies, 'origins': []}
 
@@ -86,7 +78,7 @@ app.add_middleware(
 async def download_tweet(payload: ConvertRequest) -> Response:
     url = str(payload.url)
     cookie_lookup = cookies_to_lookup(payload.cookies)
-    storage_state = cookies_to_storage_state(payload.cookies)
+    storage_state = cookies_to_storage_state(cookie_lookup)
 
     if not cookie_lookup.get("auth_token") or not cookie_lookup.get("ct0"):
         raise HTTPException(status_code=400, detail="Both auth_token and ct0 cookies are required to export this thread.")
