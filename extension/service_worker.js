@@ -238,6 +238,20 @@ function derivePdfUploadName(url) {
 
 async function fetchMarkdownForItem(item) {
   if (item?.contentType?.endpoint === 'convert-pdf/stream') {
+    if (item.url.startsWith('file://')) {
+      try {
+        const allowed = await chrome.extension.isAllowedFileSchemeAccess();
+        if (!allowed) {
+          throw new Error('Allow access to file URLs in chrome://extensions');
+        }
+      } catch (error) {
+        if (error instanceof Error) {
+          throw error;
+        }
+        throw new Error('Unable to verify file URL permissions');
+      }
+    }
+
     const pdfResponse = await fetch(item.url);
     if (!pdfResponse.ok) {
       throw await buildError(pdfResponse);
@@ -249,19 +263,23 @@ async function fetchMarkdownForItem(item) {
     }
 
     const formData = new FormData();
-    const uploadName = derivePdfUploadName(item.url);
-    formData.append('file', pdfBlob, uploadName);
+
+    formData.append('file', pdfBlob, derivePdfUploadName(item.url));
     if (item.filename) {
       formData.append('filename', item.filename);
-    }
+    };
 
     const response = await fetch(`${API_BASE_URL}/${item.contentType.endpoint}`, {
       method: 'POST',
-      headers: { Accept: 'text/markdown' },
+      headers: {
+        Accept: 'text/markdown',
+      },
       body: formData,
     });
 
     if (!response.ok) {
+      const raw = await response.clone().text();
+      console.error('[pdf upload] failed', response.status, raw);
       throw await buildError(response);
     }
 
@@ -294,7 +312,11 @@ async function buildError(response) {
     const cloned = response.clone();
     const data = await cloned.json();
     if (data?.detail) {
-      detail = data.detail;
+      if (typeof data.detail === 'string') {
+        detail = data.detail;
+      } else {
+        detail = JSON.stringify(data.detail);
+      }
     }
   } catch (err) {
     const text = await response.text();

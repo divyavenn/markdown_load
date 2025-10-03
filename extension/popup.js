@@ -12,6 +12,7 @@ let activeTab = null;
 let activeContentType = null;
 let queueDisabled = false;
 let statusTimer = null;
+let fileSchemeAllowed = true;
 const defaultStatus = 'Ready when you are :)';
 
 if (statusLabel) {
@@ -273,9 +274,16 @@ async function prepareUI(url, activeContentType) {
     return;
   }
 
+  if (activeContentType.name === 'pdf-local' && !fileSchemeAllowed) {
+    disableQueue('enable "allow access to file URLs" in chrome://extensions');
+    return;
+  }
+
+  const targetUrl = activeTab.url;
+
   await sendMessage({
     type: 'enqueue',
-    url: activeTab.url,
+    url: targetUrl,
     cookies: necessaryCookies,
     contentType: activeContentType,
     filename: filenameInput.value,
@@ -333,6 +341,13 @@ async function prepareForContentType(type, url) {
 }
 
 async function initialise() {
+  try {
+    fileSchemeAllowed = await chrome.extension.isAllowedFileSchemeAccess();
+  } catch (error) {
+    console.warn('Unable to determine file URL access', error);
+    fileSchemeAllowed = false;
+  }
+
   activeTab = await new Promise((resolve) => {
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       resolve(tabs[0] || null);
@@ -346,6 +361,11 @@ async function initialise() {
 
   if (!activeContentType) {
     disableQueue('nothing to download here!');
+    return;
+  }
+
+  if (activeContentType.name === 'pdf-local' && !fileSchemeAllowed) {
+    disableQueue('enable "allow access to file URLs" in chrome://extensions');
     return;
   }
 
@@ -389,9 +409,9 @@ queueButton.addEventListener('click', async () => {
     return;
   }
 
-  const currentUrl = activeTab.url;
-  const alreadyQueued = (state.queue || []).some((item) => item.url === currentUrl);
-  const alreadyReady = (state.ready || []).some((item) => item.url === currentUrl);
+  const rawUrl = activeTab.url;
+  const alreadyQueued = (state.queue || []).some((item) => item.url === rawUrl);
+  const alreadyReady = (state.ready || []).some((item) => item.url === rawUrl);
 
   if (alreadyQueued) {
     setStatus('already queued!');
@@ -406,7 +426,7 @@ queueButton.addEventListener('click', async () => {
   queueButton.disabled = true;
 
   try {
-    await prepareForContentType(activeContentType, activeTab.url);
+    await prepareForContentType(activeContentType, rawUrl);
   } catch (error) {
     setStatus(error.message || 'Failed to queue item.');
   } finally {

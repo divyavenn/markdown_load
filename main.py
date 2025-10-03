@@ -124,10 +124,8 @@ async def download_pdf(payload: ConvertRequest) -> Response:
 
 
 @app.post("/convert-pdf/stream", response_class=Response)
-async def upload_pdf(
-    file: UploadFile = File(...),
-    filename: str | None = Form(None),
-) -> Response:
+async def upload_pdf(file: UploadFile = File(...),filename: str | None = Form(None)) -> Response:
+    print("received filename=", filename, "upload name=", file.filename, "ctype=", file.content_type)
     original_name = file.filename
     try:
         data = await file.read()
