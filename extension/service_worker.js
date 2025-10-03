@@ -219,26 +219,10 @@ async function processQueue() {
 }
 
 
-function resolvePdfUrl(url) {
-  try {
-    const parsed = new URL(url);
-    if (parsed.protocol === 'chrome-extension:' && parsed.searchParams.has('file')) {
-      const candidate = parsed.searchParams.get('file');
-      if (candidate) {
-        return decodeURIComponent(candidate);
-      }
-    }
-  } catch (error) {
-    console.warn('Failed to resolve PDF URL', error);
-  }
-  return url;
-}
 
 function derivePdfUploadName(url) {
-  const resolved = resolvePdfUrl(url);
-
   try {
-    const parsed = new URL(resolved);
+    const parsed = new URL(url);
     const raw = decodeURIComponent(parsed.pathname.split('/').pop() || '');
     if (raw) {
       return raw.endsWith('.pdf') ? raw : `${raw}.pdf`;
@@ -247,7 +231,7 @@ function derivePdfUploadName(url) {
     // fall through to string parsing below
   }
 
-  const fallback = resolved.split('/').pop() || 'document.pdf';
+  const fallback = url.split('/').pop() || 'document.pdf';
   if (/\.pdf$/i.test(fallback)) {
     return fallback;
   }
@@ -255,10 +239,8 @@ function derivePdfUploadName(url) {
 }
 
 async function fetchMarkdownForItem(item) {
-  if (item?.contentType?.endpoint === 'convert-pdf/stream') {
-    const pdfUrl = resolvePdfUrl(item.url);
 
-    if (pdfUrl.startsWith('file://')) {
+   if (item.url.startsWith('file://')) {
       try {
         const allowed = await chrome.extension.isAllowedFileSchemeAccess();
         if (!allowed) {
@@ -270,50 +252,40 @@ async function fetchMarkdownForItem(item) {
         }
         throw new Error('Unable to verify file URL permissions');
       }
+
+      const pdfResponse = await fetch(item.url);
+      if (!pdfResponse.ok) {
+        throw await buildError(pdfResponse);
+      }
+
+      const pdfBlob = await pdfResponse.blob();
+      if (!pdfBlob || pdfBlob.size === 0) {
+        throw new Error('Received empty PDF when attempting upload.');
+      }
+
+      const formData = new FormData();
+
+      formData.append('file', pdfBlob, derivePdfUploadName(item.url));
+      if (item.filename) {
+        formData.append('filename', item.filename);
+      }
+
+      const response = await fetch(`${API_BASE_URL}/${item.contentType.endpoint}`, {
+        method: 'POST',
+        headers: {
+          Accept: 'text/markdown',
+        },
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const raw = await response.clone().text();
+        console.error('[pdf upload] failed', response.status, raw);
+        throw await buildError(response);
+      }
+
+      return await response.text();
     }
-
-    const pdfResponse = await fetch(pdfUrl);
-    if (!pdfResponse.ok) {
-      throw await buildError(pdfResponse);
-    }
-
-    const pdfBlob = await pdfResponse.blob();
-    if (!pdfBlob || pdfBlob.size === 0) {
-      throw new Error('Received empty PDF when attempting upload.');
-    }
-
-    const formData = new FormData();
-
-    formData.append('file', pdfBlob, derivePdfUploadName(pdfUrl));
-    if (item.filename) {
-      formData.append('filename', item.filename);
-    }
-
-    console.log('[pdf upload]', {
-      resolvedUrl: pdfUrl,
-      blobSize: pdfBlob.size,
-      contentType: pdfBlob.type,
-      formFields: [...formData.entries()].map(([key, value]) => (
-        value instanceof Blob ? `${key}: [Blob ${value.size} bytes]` : `${key}: ${value}`
-      )),
-    });
-
-    const response = await fetch(`${API_BASE_URL}/${item.contentType.endpoint}`, {
-      method: 'POST',
-      headers: {
-        Accept: 'text/markdown',
-      },
-      body: formData,
-    });
-
-    if (!response.ok) {
-      const raw = await response.clone().text();
-      console.error('[pdf upload] failed', response.status, raw);
-      throw await buildError(response);
-    }
-
-    return await response.text();
-  }
 
   const payload = {
     url: item.url,

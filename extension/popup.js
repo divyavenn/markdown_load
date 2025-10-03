@@ -70,20 +70,6 @@ function normaliseFilename(name, fallback) {
   return lower.endsWith('.md') ? base : `${base}.md`;
 }
 
-function resolvePdfUrl(url) {
-  try {
-    const parsed = new URL(url);
-    if (parsed.protocol === 'chrome-extension:' && parsed.searchParams.has('file')) {
-      const candidate = parsed.searchParams.get('file');
-      if (candidate) {
-        return decodeURIComponent(candidate);
-      }
-    }
-  } catch (error) {
-    console.warn('Failed to resolve PDF viewer URL', error);
-  }
-  return url;
-}
 
 function setStatus(message) {
   if (statusTimer) {
@@ -313,9 +299,7 @@ async function prepareUI(url, activeContentType) {
     return;
   }
 
-  const targetUrl = activeContentType.name.startsWith('pdf')
-    ? resolvePdfUrl(activeTab.url)
-    : activeTab.url;
+  const targetUrl = activeTab.url;
 
   let capturedHtml = null;
   if (activeContentType.captureHtml) {
@@ -393,10 +377,8 @@ async function detectContentType(url) {
     return null;
   }
 
-  const resolvedPdfUrl = resolvePdfUrl(url);
   for (const type of contentTypes) {
-    const candidateUrl = type?.name?.startsWith('pdf') ? resolvedPdfUrl : url;
-    if (type?.regex && type.regex.test(candidateUrl)) return type;
+    if (type?.regex && type.regex.test(url)) return type;
   }
   return null;
 }
@@ -487,12 +469,9 @@ queueButton.addEventListener('click', async () => {
     return;
   }
 
-  const rawUrl = activeTab.url;
-  const effectiveUrl = activeContentType.name.startsWith('pdf')
-    ? resolvePdfUrl(rawUrl)
-    : rawUrl;
-  const alreadyQueued = (state.queue || []).some((item) => item.url === effectiveUrl);
-  const alreadyReady = (state.ready || []).some((item) => item.url === effectiveUrl);
+
+  const alreadyQueued = (state.queue || []).some((item) => item.url === activeTab.url);
+  const alreadyReady = (state.ready || []).some((item) => item.url === activeTab.url);
 
   if (alreadyQueued) {
     setStatus('already queued!');
