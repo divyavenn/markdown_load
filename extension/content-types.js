@@ -1,5 +1,7 @@
 export const TWITTER_THREAD_REGEX = /^https?:\/\/(?:www\.)?x\.com\/([^/]+)\/status\/(\d+)(?:[/?#].*)?$/i;
 export const SUBSTACK_ARTICLE_REGEX = /^https?:\/\/[^/]+\/p\/[A-Za-z0-9-_.]+(?:[?#].*)?$/i;
+export const PDF_REMOTE_REGEX = /^https?:\/\/[^?#]+\.pdf(?:[?#].*)?$/i;
+export const PDF_LOCAL_REGEX = /^file:\/\/.+\.pdf(?:[?#].*)?$/i;
 
 export const ContentTypes = Object.freeze({
   TWITTER: {
@@ -17,6 +19,22 @@ export const ContentTypes = Object.freeze({
     domain:  "https://substack.com",
     requiredCookies: ['substack.sid'],
     errorMessage: 'only public previews without logging in.',
+  },
+  PDF_REMOTE: {
+    name: 'pdf-remote',
+    regex: PDF_REMOTE_REGEX,
+    endpoint: 'convert-pdf',
+    domain: null,
+    requiredCookies: [],
+    errorMessage: 'unable to fetch this PDF link.',
+  },
+  PDF_LOCAL: {
+    name: 'pdf-local',
+    regex: PDF_LOCAL_REGEX,
+    endpoint: 'convert-pdf/stream',
+    domain: null,
+    requiredCookies: [],
+    errorMessage: 'unable to read this local PDF.',
   },
 });
 

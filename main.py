@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from fastapi import FastAPI, HTTPException
+import os
+import tempfile
+from pathlib import Path
+from urllib.parse import urlparse
+
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.responses import Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, HttpUrl
@@ -10,6 +15,7 @@ from typing import Any
 
 from scrapers.substack import convert_html_to_markdown, derive_filename, fetch_html
 from scrapers.tweet import convert_tweet, slugify
+from scrapers.pdf import convert_pdf_path, convert_pdf_bytes
 
 
 class ConvertRequest(BaseModel):
@@ -72,6 +78,88 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+
+@app.post("/convert-pdf", response_class=Response)
+async def download_pdf(payload: ConvertRequest) -> Response:
+    url = str(payload.url)
+    cookie_lookup = cookies_to_lookup(payload.cookies)
+
+    response = None
+    temp_path: str | None = None
+    try:
+        response = requests.get(url, stream=True, timeout=60, cookies=cookie_lookup or None)
+        response.raise_for_status()
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+            temp_path = tmp.name
+            for chunk in response.iter_content(chunk_size=1 << 20):
+                if chunk:
+                    tmp.write(chunk)
+
+        if temp_path is None or os.path.getsize(temp_path) == 0:
+            raise HTTPException(status_code=400, detail="Fetched PDF is empty.")
+
+        markdown = convert_pdf_path(temp_path)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"PDF conversion failed: {exc}") from exc
+    finally:
+        if response is not None:
+            response.close()
+        if temp_path and os.path.exists(temp_path):
+            os.unlink(temp_path)
+
+    suggested = payload.filename.strip() if payload.filename else Path(urlparse(url).path).stem
+    download_name = suggested or "document"
+    if not download_name.lower().endswith(".md"):
+        download_name += ".md"
+
+    headers = {
+        "Content-Disposition": f'attachment; filename="{download_name}"'
+    }
+
+    return Response(content=markdown, media_type="text/markdown", headers=headers)
+
+
+@app.post("/convert-pdf/stream", response_class=Response)
+async def upload_pdf(
+    file: UploadFile = File(...),
+    filename: str | None = Form(None),
+) -> Response:
+    original_name = file.filename
+    try:
+        data = await file.read()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to read uploaded PDF: {exc}") from exc
+    finally:
+        await file.close()
+
+    if not data:
+        raise HTTPException(status_code=400, detail="No PDF content received.")
+
+    try:
+        markdown = convert_pdf_bytes(data)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"PDF conversion failed: {exc}") from exc
+
+    if filename and filename.strip():
+        download_root = filename.strip()
+    else:
+        source_name = original_name or "document.pdf"
+        download_root = Path(source_name).stem or "document"
+
+    if not download_root.lower().endswith(".md"):
+        download_name = f"{download_root}.md"
+    else:
+        download_name = download_root
+
+    headers = {
+        "Content-Disposition": f'attachment; filename="{download_name}"'
+    }
+
+    return Response(content=markdown, media_type="text/markdown", headers=headers)
 
 
 @app.post("/convert-tweet", response_class=Response)

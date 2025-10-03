@@ -1,5 +1,5 @@
 [project]
-name = "observing-happiness"
+name = "markdownload"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
@@ -14,6 +14,10 @@ dependencies = [
     "marker>=2.1.3",
     "dotenv>=0.9.9",
     "playwright>=1.55.0",
+    "torch>=2.8.0",
+    "pypdf2>=3.0.1",
+    "marker-pdf>=1.10.1",
+    "python-multipart>=0.0.20",
 ]
 
 [project.optional-dependencies]

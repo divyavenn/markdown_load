@@ -12,7 +12,6 @@ let activeTab = null;
 let activeContentType = null;
 let queueDisabled = false;
 let statusTimer = null;
-let activeCookieUrl = null;
 const defaultStatus = 'Ready when you are :)';
 
 if (statusLabel) {
@@ -277,7 +276,7 @@ async function prepareUI(url, activeContentType) {
   await sendMessage({
     type: 'enqueue',
     url: activeTab.url,
-    cookies: lookup,
+    cookies: necessaryCookies,
     contentType: activeContentType,
     filename: filenameInput.value,
   });
@@ -287,6 +286,19 @@ async function prepareUI(url, activeContentType) {
 function suggestSubstackFilename(url) {
   const slug = slugify(url.split('/').pop() || 'substack-article');
   return `${slug}.md`;
+}
+
+function suggestPdfFilename(url) {
+  try {
+    const parsed = new URL(url);
+    const base = parsed.pathname.split('/').pop() || 'document.pdf';
+    const name = base.replace(/\.pdf$/i, '') || 'document';
+    return `${slugify(name)}.md`;
+  } catch (error) {
+    const fallback = url.split('/').pop() || 'document.pdf';
+    const name = fallback.replace(/\.pdf$/i, '') || 'document';
+    return `${slugify(name)}.md`;
+  }
 }
 
 
@@ -331,7 +343,6 @@ async function initialise() {
 
   const url = activeTab?.url || '';
   activeContentType= await detectContentType(url);
-  activeCookieUrl = url;
 
   if (!activeContentType) {
     disableQueue('nothing to download here!');
@@ -348,6 +359,10 @@ async function initialise() {
         break;
       case 'twitter':
         slug = suggestTweetFilename(url);
+        break;
+      case 'pdf-remote':
+      case 'pdf-local':
+        slug = suggestPdfFilename(url);
         break;
     }
     const fname = normaliseFilename(filenameInput.value, slug);

@@ -218,14 +218,61 @@ async function processQueue() {
 }
 
 
+function derivePdfUploadName(url) {
+  try {
+    const parsed = new URL(url);
+    const raw = decodeURIComponent(parsed.pathname.split('/').pop() || '');
+    if (raw) {
+      return raw.endsWith('.pdf') ? raw : `${raw}.pdf`;
+    }
+  } catch (error) {
+    // fall through to string parsing below
+  }
+
+  const fallback = url.split('/').pop() || 'document.pdf';
+  if (/\.pdf$/i.test(fallback)) {
+    return fallback;
+  }
+  return `${fallback || 'document'}.pdf`;
+}
+
 async function fetchMarkdownForItem(item) {
+  if (item?.contentType?.endpoint === 'convert-pdf/stream') {
+    const pdfResponse = await fetch(item.url);
+    if (!pdfResponse.ok) {
+      throw await buildError(pdfResponse);
+    }
+
+    const pdfBlob = await pdfResponse.blob();
+    if (!pdfBlob || pdfBlob.size === 0) {
+      throw new Error('Received empty PDF when attempting upload.');
+    }
+
+    const formData = new FormData();
+    const uploadName = derivePdfUploadName(item.url);
+    formData.append('file', pdfBlob, uploadName);
+    if (item.filename) {
+      formData.append('filename', item.filename);
+    }
+
+    const response = await fetch(`${API_BASE_URL}/${item.contentType.endpoint}`, {
+      method: 'POST',
+      headers: { Accept: 'text/markdown' },
+      body: formData,
+    });
+
+    if (!response.ok) {
+      throw await buildError(response);
+    }
+
+    return await response.text();
+  }
+
   const payload = {
     url: item.url,
     filename: item.filename,
-    cookies : item.cookies,
+    cookies: item.cookies,
   };
-
-  console.log(item.contentType);
 
   const response = await fetch(`${API_BASE_URL}/${item.contentType.endpoint}`, {
     method: 'POST',

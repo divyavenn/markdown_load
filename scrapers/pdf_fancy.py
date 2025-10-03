@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-import os, sys, json, hashlib, tempfile, shutil, re
+import os
+import sys
+import json
+import hashlib
+import tempfile
+import shutil
+import re
+from pathlib import Path
 from dataclasses import dataclass
 from typing import Optional, Dict, Any, List, Tuple
 from PyPDF2 import PdfReader, PdfWriter
@@ -13,18 +20,17 @@ from marker.config.parser import ConfigParser
 from dotenv import load_dotenv
 load_dotenv()
 
-PDF_PATH = "./documents/input_med.pdf"
+PDF_PATH = str((Path(__file__).resolve().parent / "documents" / "one_pager.pdf"))
 OUT_PATH = "output_pdf.md"
 
 # Models (override via env if you actually have GPT-5):
 STRONG_MODEL = os.getenv("OPENAI_STRONG_MODEL", "gpt-5")       # e.g., "gpt-5"
-FAST_MODEL   = os.getenv("OPENAI_FAST_MODEL", "gpt-4o-mini")    # e.g., "gpt-5-mini" or leave empty to disable tiering
+FAST_MODEL   = os.getenv("OPENAI_FAST_MODEL", "gpt-5-mini")    # e.g., "gpt-5-mini" or leave empty to disable tiering
 
 USE_WHOLE_DOC = False
 USE_TIERED    = True
 OPENAI_TIMEOUT = 120
 OPENAI_MAX_RETRIES = 6
-
 # Internal worker cap on macOS to avoid nested pools (key name varies by build)
 PDFTEXT_WORKERS_KEY = "workers"     # some builds prefer "pdftext_workers"
 PDFTEXT_WORKERS_VAL = 1
