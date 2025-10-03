@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import tempfile
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.responses import Response
@@ -16,12 +17,15 @@ from typing import Any
 from scrapers.substack import convert_html_to_markdown, derive_filename, fetch_html
 from scrapers.tweet import convert_tweet, slugify
 from scrapers.pdf import convert_pdf_path, convert_pdf_bytes
+from scrapers.article import fetch_article_markdown
+from scrapers.youtube import convert_youtube
 
 
 class ConvertRequest(BaseModel):
     url: HttpUrl
     filename: str | None = None
     cookies: dict[str, Any] = Field(default_factory=dict)
+    html: str | None = None
 
 
 def cookies_to_lookup(cookies: dict[str, Any]) -> dict[str, str]:
@@ -67,6 +71,26 @@ def cookies_to_storage_state(cookies: dict[str, str]) -> dict[str, Any]:
         playwright_cookies.append(build_cookie('ct0', http_only=False))
 
     return {'cookies': playwright_cookies, 'origins': []}
+
+
+def derive_article_filename(url: str) -> str:
+    parsed = urlparse(url)
+    stem = Path(parsed.path).stem
+    candidate = stem or (parsed.hostname or 'article')
+    safe = ''.join(ch if ch.isalnum() or ch in ('-', '_') else '-' for ch in candidate)
+    safe = safe.strip('-_') or 'article'
+    return f"{safe}.md"
+
+
+def derive_youtube_filename(url: str) -> str:
+    parsed = urlparse(url)
+    query = parse_qs(parsed.query)
+    video_id = query.get('v', [None])[0]
+    if not video_id:
+        video_id = parsed.path.rstrip('/').split('/')[-1] or 'youtube-video'
+    safe = ''.join(ch if ch.isalnum() or ch in ('-', '_') else '-' for ch in video_id)
+    safe = safe.strip('-_') or 'youtube-video'
+    return f"{safe}.md"
 
 
 app = FastAPI(title="Markdown.load API", version="0.1.0")
@@ -124,8 +148,7 @@ async def download_pdf(payload: ConvertRequest) -> Response:
 
 
 @app.post("/convert-pdf/stream", response_class=Response)
-async def upload_pdf(file: UploadFile = File(...),filename: str | None = Form(None)) -> Response:
-    print("received filename=", filename, "upload name=", file.filename, "ctype=", file.content_type)
+async def upload_pdf(file: UploadFile = File(...), filename: str | None = Form(None)) -> Response:
     original_name = file.filename
     try:
         data = await file.read()
@@ -155,6 +178,50 @@ async def upload_pdf(file: UploadFile = File(...),filename: str | None = Form(No
 
     headers = {
         "Content-Disposition": f'attachment; filename="{download_name}"'
+    }
+
+    return Response(content=markdown, media_type="text/markdown", headers=headers)
+
+
+@app.post("/convert-article", response_class=Response)
+async def download_article(payload: ConvertRequest) -> Response:
+    url = str(payload.url)
+
+    try:
+        markdown = fetch_article_markdown(url=url, html=payload.html)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Article conversion failed: {exc}") from exc
+
+    filename = payload.filename.strip() if payload.filename else derive_article_filename(url)
+    if not filename.lower().endswith(".md"):
+        filename += ".md"
+
+    headers = {
+        "Content-Disposition": f'attachment; filename="{filename}"'
+    }
+
+    return Response(content=markdown, media_type="text/markdown", headers=headers)
+
+
+@app.post("/convert-youtube", response_class=Response)
+async def download_youtube(payload: ConvertRequest) -> Response:
+    url = str(payload.url)
+
+    try:
+        markdown = await convert_youtube(url)
+    except SystemExit as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"YouTube conversion failed: {exc}") from exc
+
+    filename = payload.filename.strip() if payload.filename else derive_youtube_filename(url)
+    if not filename.lower().endswith(".md"):
+        filename += ".md"
+
+    headers = {
+        "Content-Disposition": f'attachment; filename="{filename}"'
     }
 
     return Response(content=markdown, media_type="text/markdown", headers=headers)
@@ -194,8 +261,8 @@ async def download_substack(payload: ConvertRequest) -> Response:
 
 
     try:
-        html = fetch_html(url, cookies=cookie_lookup)
-        markdown, metadata = convert_html_to_markdown(html, url)
+        html_source = payload.html or fetch_html(url, cookies=cookie_lookup)
+        markdown, metadata = convert_html_to_markdown(html_source, url)
     except requests.HTTPError as exc:  # network / Substack failure
         raise HTTPException(status_code=exc.response.status_code if exc.response else 502,
                             detail=f"Substack request failed: {exc}") from exc

@@ -19,6 +19,19 @@ if (statusLabel) {
   statusLabel.textContent = defaultStatus;
 }
 
+function capturePageHtml(tabId) {
+  return new Promise((resolve) => {
+    chrome.tabs.sendMessage(tabId, { type: 'capture-html' }, (response) => {
+      if (chrome.runtime.lastError) {
+        console.warn('HTML capture failed', chrome.runtime.lastError.message);
+        resolve(null);
+        return;
+      }
+      resolve(response?.html || null);
+    });
+  });
+}
+
 function slugify(text) {
   return (text || '')
     .toLowerCase()
@@ -49,6 +62,21 @@ function normaliseFilename(name, fallback) {
 
   const lower = base.toLowerCase();
   return lower.endsWith('.md') ? base : `${base}.md`;
+}
+
+function resolvePdfUrl(url) {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol === 'chrome-extension:' && parsed.searchParams.has('file')) {
+      const candidate = parsed.searchParams.get('file');
+      if (candidate) {
+        return decodeURIComponent(candidate);
+      }
+    }
+  } catch (error) {
+    console.warn('Failed to resolve PDF viewer URL', error);
+  }
+  return url;
 }
 
 function setStatus(message) {
@@ -279,7 +307,14 @@ async function prepareUI(url, activeContentType) {
     return;
   }
 
-  const targetUrl = activeTab.url;
+  const targetUrl = activeContentType.name.startsWith('pdf')
+    ? resolvePdfUrl(activeTab.url)
+    : activeTab.url;
+
+  let capturedHtml = null;
+  if (activeContentType.captureHtml) {
+    capturedHtml = await capturePageHtml(activeTab.id);
+  }
 
   await sendMessage({
     type: 'enqueue',
@@ -287,6 +322,7 @@ async function prepareUI(url, activeContentType) {
     cookies: necessaryCookies,
     contentType: activeContentType,
     filename: filenameInput.value,
+    html: capturedHtml,
   });
   setStatus('downloading! feel free to close this tab and add more :)');
 }
@@ -309,6 +345,18 @@ function suggestPdfFilename(url) {
   }
 }
 
+function suggestYoutubeFilename(url) {
+  try {
+    const parsed = new URL(url);
+    const videoId = parsed.searchParams.get('v') || parsed.pathname.split('/').pop();
+    const name = videoId || 'youtube-video';
+    return `${slugify(name)}.md`;
+  } catch (error) {
+    const fallback = url.split('/').pop() || 'youtube-video';
+    return `${slugify(fallback)}.md`;
+  }
+}
+
 
 function suggestTweetFilename(url) {
   const match = url.match(ContentTypes.TWITTER.regex);
@@ -323,8 +371,10 @@ async function detectContentType(url) {
     return null;
   }
 
+  const resolvedPdfUrl = resolvePdfUrl(url);
   for (const type of contentTypes) {
-    if (type?.regex && type.regex.test(url)) return type;
+    const candidateUrl = type?.name?.startsWith('pdf') ? resolvedPdfUrl : url;
+    if (type?.regex && type.regex.test(candidateUrl)) return type;
   }
   return null;
 }
@@ -384,6 +434,9 @@ async function initialise() {
       case 'pdf-local':
         slug = suggestPdfFilename(url);
         break;
+      case 'youtube':
+        slug = suggestYoutubeFilename(url);
+        break;
     }
     const fname = normaliseFilename(filenameInput.value, slug);
     if (!filenameInput.value.trim()) {
@@ -410,8 +463,11 @@ queueButton.addEventListener('click', async () => {
   }
 
   const rawUrl = activeTab.url;
-  const alreadyQueued = (state.queue || []).some((item) => item.url === rawUrl);
-  const alreadyReady = (state.ready || []).some((item) => item.url === rawUrl);
+  const effectiveUrl = activeContentType.name.startsWith('pdf')
+    ? resolvePdfUrl(rawUrl)
+    : rawUrl;
+  const alreadyQueued = (state.queue || []).some((item) => item.url === effectiveUrl);
+  const alreadyReady = (state.ready || []).some((item) => item.url === effectiveUrl);
 
   if (alreadyQueued) {
     setStatus('already queued!');
@@ -426,7 +482,7 @@ queueButton.addEventListener('click', async () => {
   queueButton.disabled = true;
 
   try {
-    await prepareForContentType(activeContentType, rawUrl);
+    await prepareForContentType(activeContentType, effectiveUrl);
   } catch (error) {
     setStatus(error.message || 'Failed to queue item.');
   } finally {

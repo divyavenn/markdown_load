@@ -62,7 +62,7 @@ async function handleMessage(message) {
 }
 
 
-async function enqueueItem({ type, url, cookies, contentType, filename}) {
+async function enqueueItem({ type, url, cookies, contentType, filename, html }) {
   if (!url) {
     throw new Error('Missing URL');
   }
@@ -72,8 +72,9 @@ async function enqueueItem({ type, url, cookies, contentType, filename}) {
     id,
     url,
     contentType,
-    cookies, 
+    cookies,
     filename,
+    html,
     status: 'pending',
     addedAt: Date.now()
   });
@@ -218,9 +219,26 @@ async function processQueue() {
 }
 
 
-function derivePdfUploadName(url) {
+function resolvePdfUrl(url) {
   try {
     const parsed = new URL(url);
+    if (parsed.protocol === 'chrome-extension:' && parsed.searchParams.has('file')) {
+      const candidate = parsed.searchParams.get('file');
+      if (candidate) {
+        return decodeURIComponent(candidate);
+      }
+    }
+  } catch (error) {
+    console.warn('Failed to resolve PDF URL', error);
+  }
+  return url;
+}
+
+function derivePdfUploadName(url) {
+  const resolved = resolvePdfUrl(url);
+
+  try {
+    const parsed = new URL(resolved);
     const raw = decodeURIComponent(parsed.pathname.split('/').pop() || '');
     if (raw) {
       return raw.endsWith('.pdf') ? raw : `${raw}.pdf`;
@@ -229,7 +247,7 @@ function derivePdfUploadName(url) {
     // fall through to string parsing below
   }
 
-  const fallback = url.split('/').pop() || 'document.pdf';
+  const fallback = resolved.split('/').pop() || 'document.pdf';
   if (/\.pdf$/i.test(fallback)) {
     return fallback;
   }
@@ -238,7 +256,9 @@ function derivePdfUploadName(url) {
 
 async function fetchMarkdownForItem(item) {
   if (item?.contentType?.endpoint === 'convert-pdf/stream') {
-    if (item.url.startsWith('file://')) {
+    const pdfUrl = resolvePdfUrl(item.url);
+
+    if (pdfUrl.startsWith('file://')) {
       try {
         const allowed = await chrome.extension.isAllowedFileSchemeAccess();
         if (!allowed) {
@@ -252,7 +272,7 @@ async function fetchMarkdownForItem(item) {
       }
     }
 
-    const pdfResponse = await fetch(item.url);
+    const pdfResponse = await fetch(pdfUrl);
     if (!pdfResponse.ok) {
       throw await buildError(pdfResponse);
     }
@@ -264,10 +284,19 @@ async function fetchMarkdownForItem(item) {
 
     const formData = new FormData();
 
-    formData.append('file', pdfBlob, derivePdfUploadName(item.url));
+    formData.append('file', pdfBlob, derivePdfUploadName(pdfUrl));
     if (item.filename) {
       formData.append('filename', item.filename);
-    };
+    }
+
+    console.log('[pdf upload]', {
+      resolvedUrl: pdfUrl,
+      blobSize: pdfBlob.size,
+      contentType: pdfBlob.type,
+      formFields: [...formData.entries()].map(([key, value]) => (
+        value instanceof Blob ? `${key}: [Blob ${value.size} bytes]` : `${key}: ${value}`
+      )),
+    });
 
     const response = await fetch(`${API_BASE_URL}/${item.contentType.endpoint}`, {
       method: 'POST',
@@ -290,6 +319,7 @@ async function fetchMarkdownForItem(item) {
     url: item.url,
     filename: item.filename,
     cookies: item.cookies,
+    html: item.html,
   };
 
   const response = await fetch(`${API_BASE_URL}/${item.contentType.endpoint}`, {

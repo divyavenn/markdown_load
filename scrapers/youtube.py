@@ -25,6 +25,8 @@ import argparse
 import os
 import sys
 from dataclasses import dataclass
+import tempfile
+import asyncio
 from pathlib import Path
 from typing import Optional, Dict, Any
 
@@ -96,8 +98,6 @@ def download_human_subtitles(url: str, out_dir: Path, video_id: str, lang: str) 
     with YoutubeDL(opts) as ydl:
         ydl.download([url])
 
-    print(video_id)
-    print(lang)
     vtt_path = out_dir / f"{video_id}.NA.{lang}.vtt"
     return vtt_path
 
@@ -205,6 +205,50 @@ def build_markdown_transcript(
 
     parts.append("")
     return "\n".join(parts)
+
+
+
+def _locate_vtt(out_dir: Path, video_id: str) -> Path:
+    candidates = sorted(out_dir.glob(f"{video_id}*.vtt"))
+    if not candidates:
+        raise RuntimeError("Failed to locate downloaded subtitle file.")
+    return candidates[0]
+
+
+def fetch_youtube_markdown(
+    url: str,
+    *,
+    preferred_lang: str = "en",
+    whisper_model: str = "small",
+) -> str:
+    with tempfile.TemporaryDirectory(prefix="yt_", suffix="_extract") as tmp:
+        out_dir = Path(tmp)
+        ensure_directory(out_dir)
+
+        info = extract_video_info(url)
+        video_id = info.get("id") or "video"
+        title = info.get("title") or video_id
+
+        chosen_lang = select_human_subtitle_lang(info, preferred_lang)
+
+        if chosen_lang:
+            vtt_path = download_human_subtitles(url, out_dir, video_id, chosen_lang)
+            try:
+                subtitle_path = vtt_path if vtt_path.exists() else _locate_vtt(out_dir, video_id)
+            except RuntimeError:
+                subtitle_path = _locate_vtt(out_dir, video_id)
+            plain_text = vtt_to_text(subtitle_path)
+            return build_markdown_transcript(title, url, chosen_lang, plain_text)
+
+        audio_path = download_audio(url, out_dir, video_id)
+        text = transcribe_with_whisper(audio_path, whisper_model, preferred_lang)
+        if not text:
+            raise RuntimeError("Transcription produced empty output.")
+        return build_markdown_transcript(title, url, preferred_lang, text)
+
+
+async def convert_youtube(url: str) -> str:
+    return await asyncio.to_thread(fetch_youtube_markdown, url)
 
 
 def main(url) -> None:

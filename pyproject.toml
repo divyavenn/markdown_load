@@ -16,8 +16,12 @@ dependencies = [
     "playwright>=1.55.0",
     "torch>=2.8.0",
     "pypdf2>=3.0.1",
+    "trafilatura>=1.6.0",
     "marker-pdf>=1.10.1",
     "python-multipart>=0.0.20",
+    "yt-dlp>=2025.9.26",
+    "ffmpeg>=1.4",
+    "openai-whisper>=20250625",
 ]
 
 [project.optional-dependencies]
