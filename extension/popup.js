@@ -12,7 +12,6 @@ let activeTab = null;
 let activeContentType = null;
 let queueDisabled = false;
 let statusTimer = null;
-let activeCookieLookup = {};
 let activeCookieUrl = null;
 const defaultStatus = 'Ready when you are :)';
 
@@ -65,6 +64,7 @@ function setStatus(message) {
     }, 3000);
   }
 }
+
 
 function sendMessage(payload) {
   return new Promise((resolve, reject) => {
@@ -212,9 +212,22 @@ async function getCookieValue(url, name) {
   });
 }
 
-async function getAllCookies(url) {
+// this function doesn't work but would be great if it did 
+async function getHostCookies(url, host) {
+  const topLevelSite = new URL(url).origin;
+
+  // Ask for substack.com cookies scoped to this tab’s partition
+  const cookies = await chrome.cookies.getAll({
+    domain: host,
+    partitionKey: { topLevelSite }
+  });
+
+  return cookies;
+}
+
+async function getAllCookies(tabURL) {
   return new Promise((resolve) => {
-    chrome.cookies.getAll({ url }, (cookies) => {
+    chrome.cookies.getAll({ url : tabURL} , (cookies) => {
       if (chrome.runtime.lastError) {
         console.warn('Cookie lookup failed', chrome.runtime.lastError.message);
         resolve({});
@@ -243,27 +256,21 @@ function disableQueue(message) {
 }
 async function prepareUI(url, activeContentType) {
   const required = activeContentType.requiredCookies || [];
-  let lookup = {};
+  let necessaryCookies = {};
 
   // get cookies again in case tab is refreshed or user signed out.
-  if (activeCookieUrl === url && activeCookieLookup && Object.keys(activeCookieLookup).length) {
-    lookup = { ...activeCookieLookup };
-  } else {
-    const allCookies = await getAllCookies(url);
+  const allCookies = await getAllCookies(url);
     for (const name of required) {
       const value = allCookies[name];
       if (value) {
-        lookup[name] = value;
+        necessaryCookies[name] = value;
       }
     }
-    activeCookieLookup = lookup;
-    activeCookieUrl = url;
-  }
 
-  const missing = required.filter((cookie) => !lookup[cookie]);
+  const missing = required.filter((cookie) => !necessaryCookies[cookie]);
 
   if (missing.length) {
-    disableQueue(activeContentType.errorMessage || 'Required cookies not found. Unable to queue this page.');
+    disableQueue(activeContentType.errorMessage || 'try logging in first!');
     return;
   }
 
@@ -274,7 +281,7 @@ async function prepareUI(url, activeContentType) {
     contentType: activeContentType,
     filename: filenameInput.value,
   });
-  setStatus('Queued up download! Feel free to close this tab and add more :)');
+  setStatus('downloading! feel free to close this tab and add more :)');
 }
 
 function suggestSubstackFilename(url) {
@@ -290,29 +297,16 @@ function suggestTweetFilename(url) {
   const slug = slugify(`${handle}-${tweetId}`);
   return `${slug}.md`;
 }
+
 async function detectContentType(url) {
-  const allCookies = await getAllCookies(url);
-  console.log(allCookies);
-  let neededCookies = {};
-  for (const type of contentTypes) {
-    let missingCookie = false;
-    const required = type.requiredCookies || [];
-
-    for (const name of required) {
-      const value = allCookies[name];
-      console.log(name, value);
-      if (!value) {
-        neededCookies = {};
-        missingCookie = true; 
-        break;
-      }
-      neededCookies[name] = value;
-    }
-
-    if (!missingCookie) return [type, neededCookies];
+  if (typeof url !== 'string' || !url) {
+    return null;
   }
 
-  return [null, {}];
+  for (const type of contentTypes) {
+    if (type?.regex && type.regex.test(url)) return type;
+  }
+  return null;
 }
 
 
@@ -335,10 +329,8 @@ async function initialise() {
 
   await refreshState();
 
-  console.log("initializing")
-
   const url = activeTab?.url || '';
-  [activeContentType, activeCookieLookup] = await detectContentType(url);
+  activeContentType= await detectContentType(url);
   activeCookieUrl = url;
 
   if (!activeContentType) {
