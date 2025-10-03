@@ -486,7 +486,7 @@ queueButton.addEventListener('click', async () => {
   queueButton.disabled = true;
 
   try {
-    await prepareForContentType(activeContentType, effectiveUrl);
+    await prepareForContentType(activeContentType, activeTab.url);
   } catch (error) {
     setStatus(error.message || 'Failed to queue item.');
   } finally {
