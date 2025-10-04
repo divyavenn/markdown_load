@@ -122,7 +122,7 @@ def download_audio(url: str, out_dir: Path, video_id: str) -> Path:
     try:
         from yt_dlp import YoutubeDL
     except Exception as exc:
-        raise SystemExit(
+        raise RuntimeError(
             "yt-dlp is required. Install with: pip install yt-dlp"
         ) from exc
 
@@ -132,13 +132,16 @@ def download_audio(url: str, out_dir: Path, video_id: str) -> Path:
     opts: Dict[str, Any] = {
         "format": "bestaudio/best",
         "outtmpl": outtmpl,
-        "quiet": True,
-        "no_warnings": True,
+        "quiet": False,  # Enable output for debugging
+        "no_warnings": False,
     }
-    with YoutubeDL(opts) as ydl:
-        info = ydl.extract_info(url, download=True)
-        # Build the expected filename from the info and template
-        filename = ydl.prepare_filename(info)
+    try:
+        with YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            # Build the expected filename from the info and template
+            filename = ydl.prepare_filename(info)
+    except Exception as exc:
+        raise RuntimeError(f"Failed to download audio from YouTube: {exc}") from exc
 
     # If a video container was downloaded (e.g., .webm), prefer the produced file path
     audio_path = Path(filename)
@@ -152,6 +155,37 @@ def download_audio(url: str, out_dir: Path, video_id: str) -> Path:
     if not audio_path.exists():
         raise RuntimeError("Failed to locate downloaded audio file.")
     return audio_path
+
+
+def transcribe_with_openai_whisper_api(audio_path: Path, openai_api_key: str, language: Optional[str] = None) -> str:
+    print("Using OpenAI Whisper API for transcription")
+    try:
+        from openai import OpenAI
+    except Exception as exc:
+        raise SystemExit(
+            "openai package is required. Install with: pip install openai"
+        ) from exc
+
+    if not openai_api_key:
+        raise ValueError("OpenAI API key is required for Whisper API transcription")
+
+    client = OpenAI(api_key=openai_api_key)
+
+    try:
+        with open(audio_path, "rb") as audio_file:
+            transcript_params: Dict[str, Any] = {
+                "model": "whisper-1",
+                "file": audio_file,
+            }
+
+            if language:
+                transcript_params["language"] = language
+
+            transcript = client.audio.transcriptions.create(**transcript_params)
+
+        return transcript.text.strip()
+    except Exception as exc:
+        raise RuntimeError(f"OpenAI Whisper API transcription failed: {exc}") from exc
 
 
 def transcribe_with_whisper(audio_path: Path, model_name: str, language: Optional[str]) -> str:
@@ -220,35 +254,72 @@ def fetch_youtube_markdown(
     *,
     preferred_lang: str = "en",
     whisper_model: str = "small",
+    openai_api_key: str | None = None
 ) -> str:
+    print(f"[YouTube] Starting conversion for: {url}")
     with tempfile.TemporaryDirectory(prefix="yt_", suffix="_extract") as tmp:
         out_dir = Path(tmp)
         ensure_directory(out_dir)
 
+        print(f"[YouTube] Extracting video info...")
         info = extract_video_info(url)
         video_id = info.get("id") or "video"
         title = info.get("title") or video_id
+        print(f"[YouTube] Video: {title} ({video_id})")
 
         chosen_lang = select_human_subtitle_lang(info, preferred_lang)
 
         if chosen_lang:
+            print(f"[YouTube] Found human subtitles in language: {chosen_lang}")
             vtt_path = download_human_subtitles(url, out_dir, video_id, chosen_lang)
             try:
                 subtitle_path = vtt_path if vtt_path.exists() else _locate_vtt(out_dir, video_id)
             except RuntimeError:
                 subtitle_path = _locate_vtt(out_dir, video_id)
             plain_text = vtt_to_text(subtitle_path)
+            print(f"[YouTube] Subtitles converted successfully")
             return build_markdown_transcript(title, url, chosen_lang, plain_text)
 
-        audio_path = download_audio(url, out_dir, video_id)
-        text = transcribe_with_whisper(audio_path, whisper_model, preferred_lang)
+        print(f"[YouTube] No subtitles found, will need transcription")
+        # If no subtitles available, we need transcription
+        # Use OpenAI Whisper API if API key is provided, otherwise use local Whisper
+        if openai_api_key:
+            print(f"[YouTube] Using OpenAI Whisper API for transcription")
+            print(f"[YouTube] Downloading audio...")
+            audio_path = download_audio(url, out_dir, video_id)
+            print(f"[YouTube] Audio downloaded to: {audio_path}")
+            try: 
+                text = transcribe_with_openai_whisper_api(audio_path, openai_api_key, preferred_lang)
+            except Exception as exc:
+                print(f"[YouTube] OpenAI did not work, starting local Whisper transcription (this may take a while)...")
+                text = transcribe_with_whisper(audio_path, whisper_model, preferred_lang)
+        else:
+            print(f"[YouTube] Checking for local Whisper installation...")
+            # Check if local Whisper is available before downloading audio
+            try:
+                import whisper  # type: ignore
+                print(f"[YouTube] Local Whisper found, using it for transcription")
+            except ImportError:
+                raise RuntimeError(
+                    "No subtitles found for this video. "
+                    "Either provide an OpenAI API key in settings, or install openai-whisper locally: "
+                    "pip install openai-whisper"
+                )
+
+            print(f"[YouTube] Downloading audio...")
+            audio_path = download_audio(url, out_dir, video_id)
+            print(f"[YouTube] Audio downloaded to: {audio_path}")
+            print(f"[YouTube] Starting local Whisper transcription (this may take a while)...")
+            text = transcribe_with_whisper(audio_path, whisper_model, preferred_lang)
+
         if not text:
             raise RuntimeError("Transcription produced empty output.")
+        print(f"[YouTube] Conversion complete")
         return build_markdown_transcript(title, url, preferred_lang, text)
 
 
-async def convert_youtube(url: str) -> str:
-    return await asyncio.to_thread(fetch_youtube_markdown, url)
+async def convert_youtube(url: str, openai_api_key: str | None = None) -> str:
+    return await asyncio.to_thread(fetch_youtube_markdown, url, openai_api_key=openai_api_key)
 
 
 def main(url) -> None:

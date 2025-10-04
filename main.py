@@ -163,7 +163,7 @@ def convert_remote_pdf_sync(url: str, provided_filename: str | None, cookies: Di
         if temp_path is None or os.path.getsize(temp_path) == 0:
             raise HTTPException(status_code=400, detail="Fetched PDF is empty.")
 
-        markdown = convert_pdf_path(temp_path)
+        markdown = convert_pdf_path(temp_path, openai_api_key)
     except HTTPException:
         raise
     except Exception as exc:
@@ -184,7 +184,7 @@ def convert_pdf_stream_sync(data: bytes, provided_filename: str | None, original
         raise HTTPException(status_code=400, detail="No PDF content received.")
 
     try:
-        markdown = convert_pdf_bytes(data)
+        markdown = convert_pdf_bytes(data, openai_api_key)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"PDF conversion failed: {exc}") from exc
 
@@ -254,9 +254,9 @@ def convert_article_sync(url: str, html: str | None, provided_filename: str | No
     return {'markdown': markdown, 'filename': filename}
 
 
-async def convert_youtube_async(url: str, provided_filename: str | None) -> Dict[str, str]:
+async def convert_youtube_async(url: str, provided_filename: str | None, openai_api_key: str | None) -> Dict[str, str]:
     try:
-        markdown = await convert_youtube(url)
+        markdown = await convert_youtube(url, openai_api_key=openai_api_key)
     except SystemExit as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     except Exception as exc:
@@ -438,9 +438,10 @@ async def download_article(payload: ConvertRequest) -> Dict[str, str]:
 async def download_youtube(payload: ConvertRequest) -> Dict[str, str]:
     url = str(payload.url)
     provided_filename = payload.filename
+    openai_api_key = payload.openaiApiKey
 
     async def task() -> Dict[str, str]:
-        return await convert_youtube_async(url, provided_filename)
+        return await convert_youtube_async(url, provided_filename, openai_api_key)
 
     return await enqueue_job(task)
 
