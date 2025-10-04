@@ -18,6 +18,7 @@ from typing import Any, Awaitable, Callable, Dict
 from scrapers.substack import convert_html_to_markdown, derive_filename, fetch_html
 from scrapers.tweet import convert_tweet, slugify
 from scrapers.pdf import convert_pdf_path, convert_pdf_bytes
+from scrapers.pdf_fancy import convert_pdf_fancy_path, convert_pdf_fancy_bytes
 from scrapers.article import fetch_article_markdown
 from scrapers.youtube import convert_youtube
 
@@ -192,6 +193,53 @@ def convert_pdf_stream_sync(data: bytes, provided_filename: str | None, original
     return {'markdown': markdown, 'filename': filename}
 
 
+def convert_remote_pdf_fancy_sync(url: str, provided_filename: str | None, cookies: Dict[str, str]) -> Dict[str, str]:
+    response = None
+    temp_path: str | None = None
+    try:
+        response = requests.get(url, stream=True, timeout=60, cookies=cookies or None)
+        response.raise_for_status()
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+            temp_path = tmp.name
+            for chunk in response.iter_content(chunk_size=1 << 20):
+                if chunk:
+                    tmp.write(chunk)
+
+        if temp_path is None or os.path.getsize(temp_path) == 0:
+            raise HTTPException(status_code=400, detail="Fetched PDF is empty.")
+
+        markdown = convert_pdf_fancy_path(temp_path)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"PDF fancy conversion failed: {exc}") from exc
+    finally:
+        if response is not None:
+            response.close()
+        if temp_path and os.path.exists(temp_path):
+            os.unlink(temp_path)
+
+    fallback = Path(urlparse(url).path).stem or "document"
+    filename = choose_filename(provided_filename, fallback)
+    return {'markdown': markdown, 'filename': filename}
+
+
+def convert_pdf_fancy_stream_sync(data: bytes, provided_filename: str | None, original_name: str | None) -> Dict[str, str]:
+    if not data:
+        raise HTTPException(status_code=400, detail="No PDF content received.")
+
+    try:
+        markdown = convert_pdf_fancy_bytes(data)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"PDF fancy conversion failed: {exc}") from exc
+
+    source_name = original_name or "document.pdf"
+    fallback = Path(source_name).stem or "document"
+    filename = choose_filename(provided_filename, fallback)
+    return {'markdown': markdown, 'filename': filename}
+
+
 def convert_article_sync(url: str, html: str | None, provided_filename: str | None) -> Dict[str, str]:
     try:
         markdown = fetch_article_markdown(url=url, html=html)
@@ -311,6 +359,49 @@ async def upload_pdf(file: UploadFile = File(...), filename: str | None = Form(N
     async def task() -> Dict[str, str]:
         return await asyncio.to_thread(
             convert_pdf_stream_sync,
+            data,
+            provided_filename,
+            original_name,
+        )
+
+    return await enqueue_job(task)
+
+
+@app.post("/convert-pdf-fancy", status_code=status.HTTP_202_ACCEPTED)
+async def download_pdf_fancy(payload: ConvertRequest) -> Dict[str, str]:
+    url = str(payload.url)
+    cookie_lookup = cookies_to_lookup(payload.cookies)
+    provided_filename = payload.filename
+
+    async def task() -> Dict[str, str]:
+        return await asyncio.to_thread(
+            convert_remote_pdf_fancy_sync,
+            url,
+            provided_filename,
+            cookie_lookup,
+        )
+
+    return await enqueue_job(task)
+
+
+@app.post("/convert-pdf-fancy/stream", status_code=status.HTTP_202_ACCEPTED)
+async def upload_pdf_fancy(file: UploadFile = File(...), filename: str | None = Form(None)) -> Dict[str, str]:
+    original_name = file.filename
+    try:
+        data = await file.read()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to read uploaded PDF: {exc}") from exc
+    finally:
+        await file.close()
+
+    if not data:
+        raise HTTPException(status_code=400, detail="No PDF content received.")
+
+    provided_filename = filename
+
+    async def task() -> Dict[str, str]:
+        return await asyncio.to_thread(
+            convert_pdf_fancy_stream_sync,
             data,
             provided_filename,
             original_name,

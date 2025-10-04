@@ -327,10 +327,123 @@ def main():
         f.write(combined)
     print(f"Wrote markdown to {OUT_PATH}")
 
+def convert_pdf_fancy_path(pdf_path: str) -> str:
+    """Convert a PDF file to markdown using the fancy marker-based converter."""
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise ValueError("OPENAI_API_KEY missing")
+    base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+
+    os.environ.pop("PYTORCH_ENABLE_MPS_FALLBACK", None)
+    _ = torch.backends.mps.is_available()
+
+    try:
+        import marker as _marker_mod
+        marker_version = getattr(_marker_mod, "__version__", "unknown")
+    except Exception:
+        marker_version = "unknown"
+
+    config_sig = f"redo_inline_math=1;workers={PDFTEXT_WORKERS_VAL}"
+    runner = MarkerRunner(api_key, base_url, marker_version, config_sig)
+    file_hash = sha256_file(pdf_path)
+
+    if USE_WHOLE_DOC:
+        first_model = STRONG_MODEL if not (USE_TIERED and FAST_MODEL) else FAST_MODEL
+        strong_needed = False
+
+        k = cache_key(file_hash, None, first_model, marker_version, config_sig)
+        cached = load_cached_text(k)
+        if cached is None:
+            conv = runner.build_converter(first_model)
+            try:
+                cached = runner.run_markdown(conv, pdf_path)
+            except Exception:
+                if USE_TIERED and first_model == FAST_MODEL:
+                    strong_needed = True
+                else:
+                    raise
+            if not strong_needed:
+                save_cached_text(k, cached)
+
+        if USE_TIERED and strong_needed:
+            k2 = cache_key(file_hash, None, STRONG_MODEL, marker_version, config_sig)
+            cached2 = load_cached_text(k2)
+            if cached2 is None:
+                conv2 = runner.build_converter(STRONG_MODEL)
+                cached2 = runner.run_markdown(conv2, pdf_path)
+                save_cached_text(k2, cached2)
+            cached = cached2
+
+        return cached
+
+    temp_dir, n_pages, page_files = split_pdf_to_temp_pages(pdf_path)
+
+    converters: Dict[str, Optional[PdfConverter]] = {}
+    converters["fast"] = runner.build_converter(FAST_MODEL) if (USE_TIERED and FAST_MODEL) else None
+    converters["strong"] = runner.build_converter(STRONG_MODEL)
+
+    results: List[str] = ["" for _ in range(n_pages)]
+    escalate_budget = min(int(n_pages * ESCALATE_MAX_FRACTION), ESCALATE_MAX_ABS)
+
+    try:
+        for idx, pf in enumerate(page_files):
+            k_strong = cache_key(file_hash, idx, STRONG_MODEL, marker_version, config_sig)
+            t = load_cached_text(k_strong)
+            if t is not None:
+                results[idx] = t
+                continue
+
+            k_fast = cache_key(file_hash, idx, FAST_MODEL, marker_version, config_sig) if (USE_TIERED and FAST_MODEL) else None
+            t_fast = load_cached_text(k_fast) if k_fast else None
+
+            if t_fast is None and converters["fast"] is not None:
+                try:
+                    t_fast = runner.run_markdown(converters["fast"], pf)
+                    save_cached_text(k_fast, t_fast)
+                except Exception:
+                    t_fast = None
+
+            need_strong = (t_fast is None)
+            if not need_strong:
+                if is_suspect_markdown(t_fast):
+                    need_strong = (escalate_budget > 0)
+
+            if need_strong:
+                try:
+                    t_strong = runner.run_markdown(converters["strong"], pf)
+                    save_cached_text(k_strong, t_strong)
+                    results[idx] = t_strong
+                    if t_fast is not None and is_suspect_markdown(t_fast):
+                        escalate_budget = max(escalate_budget - 1, 0)
+                except Exception as e:
+                    results[idx] = t_fast if t_fast is not None else f"[ERROR page {idx}: {e!r}]"
+            else:
+                results[idx] = t_fast
+
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+    return "\n\n".join(results)
+
+
+def convert_pdf_fancy_bytes(data: bytes) -> str:
+    """Convert PDF bytes to markdown using the fancy marker-based converter."""
+    temp_path: Optional[str] = None
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+            temp_path = tmp.name
+            tmp.write(data)
+
+        return convert_pdf_fancy_path(temp_path)
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            os.unlink(temp_path)
+
+
 if __name__ == "__main__":
     import multiprocessing as mp
-    try: 
+    try:
       mp.set_start_method("spawn", force=True)
-    except RuntimeError: 
+    except RuntimeError:
       pass
     sys.exit(main())
