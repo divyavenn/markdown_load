@@ -3,16 +3,17 @@ from __future__ import annotations
 import asyncio
 import os
 import tempfile
+import time
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
+from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form
-from fastapi.responses import Response
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, HttpUrl
 import requests
 
-from typing import Any
+from typing import Any, Awaitable, Callable, Dict
 
 from scrapers.substack import convert_html_to_markdown, derive_filename, fetch_html
 from scrapers.tweet import convert_tweet, slugify
@@ -93,26 +94,62 @@ def derive_youtube_filename(url: str) -> str:
     return f"{safe}.md"
 
 
-app = FastAPI(title="Markdown.load API", version="0.1.0")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["POST"],
-    allow_headers=["*"],
-)
-
+def choose_filename(provided: str | None, fallback: str) -> str:
+    base = (provided or '').strip()
+    if not base:
+        base = fallback.strip()
+    if not base:
+        base = 'document'
+    return base if base.lower().endswith('.md') else f"{base}.md"
 
 
-@app.post("/convert-pdf", response_class=Response)
-async def download_pdf(payload: ConvertRequest) -> Response:
-    url = str(payload.url)
-    cookie_lookup = cookies_to_lookup(payload.cookies)
+jobs: Dict[str, Dict[str, Any]] = {}
+jobs_lock = asyncio.Lock()
 
+
+async def set_job_status(job_id: str, status: str, result: Dict[str, str] | None = None, error: str | None = None) -> None:
+    async with jobs_lock:
+        record = jobs.get(job_id)
+        if record is None:
+            return
+        record['status'] = status
+        record['result'] = result
+        record['error'] = error
+        record['updated_at'] = time.time()
+
+
+async def enqueue_job(task: Callable[[], Awaitable[Dict[str, str]]]) -> Dict[str, str]:
+    job_id = uuid4().hex
+    now = time.time()
+    async with jobs_lock:
+        jobs[job_id] = {
+            'status': 'processing',
+            'result': None,
+            'error': None,
+            'created_at': now,
+            'updated_at': now,
+        }
+
+    async def runner() -> None:
+        try:
+            result = await task()
+        except HTTPException as exc:
+            detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
+            await set_job_status(job_id, 'error', error=detail)
+        except Exception as exc:
+            await set_job_status(job_id, 'error', error=str(exc))
+        else:
+            await set_job_status(job_id, 'ready', result=result)
+
+    asyncio.create_task(runner())
+    return {'jobId': job_id, 'status': 'processing'}
+
+
+def convert_remote_pdf_sync(url: str, provided_filename: str | None, cookies: Dict[str, str]) -> Dict[str, str]:
     response = None
     temp_path: str | None = None
     try:
-        response = requests.get(url, stream=True, timeout=60, cookies=cookie_lookup or None)
+        response = requests.get(url, stream=True, timeout=60, cookies=cookies or None)
         response.raise_for_status()
 
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
@@ -135,20 +172,129 @@ async def download_pdf(payload: ConvertRequest) -> Response:
         if temp_path and os.path.exists(temp_path):
             os.unlink(temp_path)
 
-    suggested = payload.filename.strip() if payload.filename else Path(urlparse(url).path).stem
-    download_name = suggested or "document"
-    if not download_name.lower().endswith(".md"):
-        download_name += ".md"
+    fallback = Path(urlparse(url).path).stem or "document"
+    filename = choose_filename(provided_filename, fallback)
+    return {'markdown': markdown, 'filename': filename}
 
-    headers = {
-        "Content-Disposition": f'attachment; filename="{download_name}"'
+
+def convert_pdf_stream_sync(data: bytes, provided_filename: str | None, original_name: str | None) -> Dict[str, str]:
+    if not data:
+        raise HTTPException(status_code=400, detail="No PDF content received.")
+
+    try:
+        markdown = convert_pdf_bytes(data)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"PDF conversion failed: {exc}") from exc
+
+    source_name = original_name or "document.pdf"
+    fallback = Path(source_name).stem or "document"
+    filename = choose_filename(provided_filename, fallback)
+    return {'markdown': markdown, 'filename': filename}
+
+
+def convert_article_sync(url: str, html: str | None, provided_filename: str | None) -> Dict[str, str]:
+    try:
+        markdown = fetch_article_markdown(url=url, html=html)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Article conversion failed: {exc}") from exc
+
+    fallback = derive_article_filename(url)
+    filename = choose_filename(provided_filename, fallback)
+    return {'markdown': markdown, 'filename': filename}
+
+
+async def convert_youtube_async(url: str, provided_filename: str | None) -> Dict[str, str]:
+    try:
+        markdown = await convert_youtube(url)
+    except SystemExit as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"YouTube conversion failed: {exc}") from exc
+
+    fallback = derive_youtube_filename(url)
+    filename = choose_filename(provided_filename, fallback)
+    return {'markdown': markdown, 'filename': filename}
+
+
+async def convert_tweet_async(url: str, provided_filename: str | None, storage_state: Dict[str, Any]) -> Dict[str, str]:
+    try:
+        markdown, handle, root_id = await convert_tweet(url=url, cookies=storage_state)
+    except ValueError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    base = slugify(handle + '-' + root_id) or root_id or 'tweet'
+    filename = choose_filename(provided_filename, base)
+    return {'markdown': markdown, 'filename': filename}
+
+
+def convert_substack_sync(url: str, provided_filename: str | None, cookies: Dict[str, str], html: str | None) -> Dict[str, str]:
+    try:
+        html_source = html or fetch_html(url, cookies=cookies)
+        markdown, metadata = convert_html_to_markdown(html_source, url)
+    except requests.HTTPError as exc:
+        status_code = exc.response.status_code if exc.response else 502
+        raise HTTPException(status_code=status_code, detail=f"Substack request failed: {exc}") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    fallback = derive_filename(url, metadata.get('title', ''))
+    filename = choose_filename(provided_filename, fallback)
+    return {'markdown': markdown, 'filename': filename}
+app = FastAPI(title="Markdown.load API", version="0.1.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["POST"],
+    allow_headers=["*"],
+)
+
+
+@app.get("/jobs/{job_id}")
+async def get_job_status(job_id: str) -> Dict[str, Any]:
+    async with jobs_lock:
+        record = jobs.get(job_id)
+
+    if record is None:
+        raise HTTPException(status_code=404, detail="Job not found.")
+
+    payload: Dict[str, Any] = {
+        'jobId': job_id,
+        'status': record['status'],
     }
 
-    return Response(content=markdown, media_type="text/markdown", headers=headers)
+    if record['status'] == 'ready' and record['result']:
+        payload['markdown'] = record['result']['markdown']
+        payload['filename'] = record['result']['filename']
+    elif record['status'] == 'error':
+        payload['error'] = record['error'] or 'Conversion failed'
+
+    return payload
 
 
-@app.post("/convert-pdf/stream", response_class=Response)
-async def upload_pdf(file: UploadFile = File(...), filename: str | None = Form(None)) -> Response:
+@app.post("/convert-pdf", status_code=status.HTTP_202_ACCEPTED)
+async def download_pdf(payload: ConvertRequest) -> Dict[str, str]:
+    url = str(payload.url)
+    cookie_lookup = cookies_to_lookup(payload.cookies)
+    provided_filename = payload.filename
+
+    async def task() -> Dict[str, str]:
+        return await asyncio.to_thread(
+            convert_remote_pdf_sync,
+            url,
+            provided_filename,
+            cookie_lookup,
+        )
+
+    return await enqueue_job(task)
+
+
+@app.post("/convert-pdf/stream", status_code=status.HTTP_202_ACCEPTED)
+async def upload_pdf(file: UploadFile = File(...), filename: str | None = Form(None)) -> Dict[str, str]:
     original_name = file.filename
     try:
         data = await file.read()
@@ -160,75 +306,49 @@ async def upload_pdf(file: UploadFile = File(...), filename: str | None = Form(N
     if not data:
         raise HTTPException(status_code=400, detail="No PDF content received.")
 
-    try:
-        markdown = convert_pdf_bytes(data)
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"PDF conversion failed: {exc}") from exc
+    provided_filename = filename
 
-    if filename and filename.strip():
-        download_root = filename.strip()
-    else:
-        source_name = original_name or "document.pdf"
-        download_root = Path(source_name).stem or "document"
+    async def task() -> Dict[str, str]:
+        return await asyncio.to_thread(
+            convert_pdf_stream_sync,
+            data,
+            provided_filename,
+            original_name,
+        )
 
-    if not download_root.lower().endswith(".md"):
-        download_name = f"{download_root}.md"
-    else:
-        download_name = download_root
-
-    headers = {
-        "Content-Disposition": f'attachment; filename="{download_name}"'
-    }
-
-    return Response(content=markdown, media_type="text/markdown", headers=headers)
+    return await enqueue_job(task)
 
 
-@app.post("/convert-article", response_class=Response)
-async def download_article(payload: ConvertRequest) -> Response:
+@app.post("/convert-article", status_code=status.HTTP_202_ACCEPTED)
+async def download_article(payload: ConvertRequest) -> Dict[str, str]:
     url = str(payload.url)
+    provided_html = payload.html
+    provided_filename = payload.filename
 
-    try:
-        markdown = fetch_article_markdown(url=url, html=payload.html)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Article conversion failed: {exc}") from exc
+    async def task() -> Dict[str, str]:
+        return await asyncio.to_thread(
+            convert_article_sync,
+            url,
+            provided_html,
+            provided_filename,
+        )
 
-    filename = payload.filename.strip() if payload.filename else derive_article_filename(url)
-    if not filename.lower().endswith(".md"):
-        filename += ".md"
-
-    headers = {
-        "Content-Disposition": f'attachment; filename="{filename}"'
-    }
-
-    return Response(content=markdown, media_type="text/markdown", headers=headers)
+    return await enqueue_job(task)
 
 
-@app.post("/convert-youtube", response_class=Response)
-async def download_youtube(payload: ConvertRequest) -> Response:
+@app.post("/convert-youtube", status_code=status.HTTP_202_ACCEPTED)
+async def download_youtube(payload: ConvertRequest) -> Dict[str, str]:
     url = str(payload.url)
+    provided_filename = payload.filename
 
-    try:
-        markdown = await convert_youtube(url)
-    except SystemExit as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"YouTube conversion failed: {exc}") from exc
+    async def task() -> Dict[str, str]:
+        return await convert_youtube_async(url, provided_filename)
 
-    filename = payload.filename.strip() if payload.filename else derive_youtube_filename(url)
-    if not filename.lower().endswith(".md"):
-        filename += ".md"
-
-    headers = {
-        "Content-Disposition": f'attachment; filename="{filename}"'
-    }
-
-    return Response(content=markdown, media_type="text/markdown", headers=headers)
+    return await enqueue_job(task)
 
 
-@app.post("/convert-tweet", response_class=Response)
-async def download_tweet(payload: ConvertRequest) -> Response:
+@app.post("/convert-tweet", status_code=status.HTTP_202_ACCEPTED)
+async def download_tweet(payload: ConvertRequest) -> Dict[str, str]:
     url = str(payload.url)
     cookie_lookup = cookies_to_lookup(payload.cookies)
     storage_state = cookies_to_storage_state(cookie_lookup)
@@ -236,45 +356,28 @@ async def download_tweet(payload: ConvertRequest) -> Response:
     if not cookie_lookup.get("auth_token") or not cookie_lookup.get("ct0"):
         raise HTTPException(status_code=400, detail="Both auth_token and ct0 cookies are required to export this thread.")
 
-    try:
-        markdown, handle, root_id = await convert_tweet(url=url, cookies=storage_state)
-    except ValueError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    provided_filename = payload.filename
 
-    default_filename = f"{slugify(handle+'-'+root_id) or root_id}.md"
-    filename = payload.filename.strip() if payload.filename else default_filename
-    if not filename.lower().endswith(".md"):
-        filename += ".md"
+    async def task() -> Dict[str, str]:
+        return await convert_tweet_async(url, provided_filename, storage_state)
 
-    headers = {
-        "Content-Disposition": f'attachment; filename="{filename}"'
-    }
-    return Response(content=markdown, media_type="text/markdown", headers=headers)
+    return await enqueue_job(task)
 
 
-@app.post("/convert-substack", response_class=Response)
-async def download_substack(payload: ConvertRequest) -> Response:
+@app.post("/convert-substack", status_code=status.HTTP_202_ACCEPTED)
+async def download_substack(payload: ConvertRequest) -> Dict[str, str]:
     url = str(payload.url)
     cookie_lookup = cookies_to_lookup(payload.cookies)
+    provided_html = payload.html
+    provided_filename = payload.filename
 
+    async def task() -> Dict[str, str]:
+        return await asyncio.to_thread(
+            convert_substack_sync,
+            url,
+            provided_filename,
+            cookie_lookup,
+            provided_html,
+        )
 
-    try:
-        html_source = payload.html or fetch_html(url, cookies=cookie_lookup)
-        markdown, metadata = convert_html_to_markdown(html_source, url)
-    except requests.HTTPError as exc:  # network / Substack failure
-        raise HTTPException(status_code=exc.response.status_code if exc.response else 502,
-                            detail=f"Substack request failed: {exc}") from exc
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-    filename = payload.filename.strip() if payload.filename else derive_filename(url, metadata.get("title", ""))
-    if not filename.lower().endswith(".md"):
-        filename += ".md"
-
-    headers = {
-        "Content-Disposition": f'attachment; filename="{filename}"'
-    }
-
-    return Response(content=markdown, media_type="text/markdown", headers=headers)
+    return await enqueue_job(task)

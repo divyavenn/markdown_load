@@ -1,14 +1,25 @@
-import { ContentTypes, contentTypes } from './content-types.js';
+import { contentTypes } from './content-types.js';
 
 const STATE_KEY = 'markdownLoadState';
 const API_BASE_URL = 'http://127.0.0.1:8000';
 const REQUEST_HEADERS = {
   'Content-Type': 'application/json',
-  'Accept': 'text/markdown'
+  'Accept': 'application/json'
 };
 
+const JOB_STATUS_BASE_URL = `${API_BASE_URL}/jobs`;
+const JOB_POLL_INTERVAL_MS = 3_000;
+const JOB_POLL_MAX_INTERVAL_MS = 15_000;
+
+const jobPolls = new Map();
+
 let processingQueue = false;
-const contentTypeByName = new Map(contentTypes.map((type) => [type.name, type]));
+
+function sleep(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
 
 async function getState() {
   const result = await chrome.storage.local.get(STATE_KEY);
@@ -24,6 +35,246 @@ function createId() {
     return crypto.randomUUID();
   }
   return `id-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
+}
+
+function trackJobPoll(jobId, factory) {
+  if (jobPolls.has(jobId)) {
+    return jobPolls.get(jobId);
+  }
+  const task = (async () => {
+    try {
+      await factory();
+    } finally {
+      jobPolls.delete(jobId);
+    }
+  })();
+  jobPolls.set(jobId, task);
+  return task;
+}
+
+async function getQueueItemReference(itemId) {
+  const state = await getState();
+  const index = state.queue.findIndex((entry) => entry.id === itemId);
+  if (index === -1) {
+    return null;
+  }
+  return { state, index };
+}
+
+async function storeQueueItemJobId(itemId, jobId) {
+  const reference = await getQueueItemReference(itemId);
+  if (!reference) {
+    return null;
+  }
+  const { state, index } = reference;
+  const item = state.queue[index];
+  item.jobId = jobId;
+  await setState(state);
+  return item;
+}
+
+async function setQueueItemProcessing(itemId) {
+  const reference = await getQueueItemReference(itemId);
+  if (!reference) {
+    return null;
+  }
+  const { state, index } = reference;
+  const item = state.queue[index];
+  if (!item.jobId) {
+    return null;
+  }
+  item.status = 'processing';
+  item.jobStatus = 'processing';
+  item.error = undefined;
+  await setState(state);
+  return item;
+}
+
+async function updateQueueItemJobStatus(itemId, jobStatus) {
+  const reference = await getQueueItemReference(itemId);
+  if (!reference) {
+    return false;
+  }
+  const { state, index } = reference;
+  state.queue[index].jobStatus = jobStatus;
+  await setState(state);
+  return true;
+}
+
+async function markQueueItemError(itemId, message) {
+  const reference = await getQueueItemReference(itemId);
+  if (!reference) {
+    return;
+  }
+  const { state, index } = reference;
+  state.queue[index].status = 'error';
+  state.queue[index].jobStatus = 'error';
+  state.queue[index].error = message;
+  await setState(state);
+}
+
+async function moveQueueItemToReady(itemId, result) {
+  const reference = await getQueueItemReference(itemId);
+  if (!reference) {
+    return;
+  }
+  const { state, index } = reference;
+  const entry = state.queue[index];
+  const filename = result.filename || entry.filename || 'download.md';
+  state.queue.splice(index, 1);
+  state.ready.push({
+    id: entry.id,
+    url: entry.url,
+    filename,
+    markdown: result.markdown,
+    completedAt: Date.now()
+  });
+  await setState(state);
+}
+
+async function extractJobId(response) {
+  if (!response.ok) {
+    throw await buildError(response);
+  }
+  let data = null;
+  try {
+    data = await response.json();
+  } catch (error) {
+    // ignore parse errors and fall through
+  }
+  const jobId = data?.jobId;
+  if (typeof jobId !== 'string' || !jobId) {
+    throw new Error('Backend response missing jobId.');
+  }
+  return jobId;
+}
+
+async function submitConversionJob(item) {
+  if (item.url.startsWith('file://')) {
+    try {
+      const allowed = await chrome.extension.isAllowedFileSchemeAccess();
+      if (!allowed) {
+        throw new Error('Allow access to file URLs in chrome://extensions');
+      }
+    } catch (error) {
+      if (error instanceof Error) {
+        throw error;
+      }
+      throw new Error('Unable to verify file URL permissions');
+    }
+
+    const pdfResponse = await fetch(item.url);
+    if (!pdfResponse.ok) {
+      throw await buildError(pdfResponse);
+    }
+
+    const pdfBlob = await pdfResponse.blob();
+    if (!pdfBlob || pdfBlob.size === 0) {
+      throw new Error('Received empty PDF when attempting upload.');
+    }
+
+    const formData = new FormData();
+    formData.append('file', pdfBlob, derivePdfUploadName(item.url));
+    if (item.filename) {
+      formData.append('filename', item.filename);
+    }
+
+    const response = await fetch(`${API_BASE_URL}/${item.contentType.endpoint}`, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+      },
+      body: formData,
+    });
+
+    return await extractJobId(response);
+  }
+
+  const payload = {
+    url: item.url,
+    filename: item.filename,
+    cookies: item.cookies,
+    html: item.html,
+  };
+
+  const response = await fetch(`${API_BASE_URL}/${item.contentType.endpoint}`, {
+    method: 'POST',
+    headers: REQUEST_HEADERS,
+    body: JSON.stringify(payload),
+  });
+
+  return await extractJobId(response);
+}
+
+async function requestJobStatus(jobId) {
+  const response = await fetch(`${JOB_STATUS_BASE_URL}/${encodeURIComponent(jobId)}`, {
+    method: 'GET',
+    headers: { Accept: 'application/json' },
+    cache: 'no-cache',
+  });
+
+  if (response.status === 404) {
+    throw new Error('Conversion not found on server.');
+  }
+
+  if (!response.ok) {
+    throw await buildError(response);
+  }
+
+  const data = await response.json();
+  if (!data || typeof data.status !== 'string') {
+    throw new Error('Invalid job status response from server.');
+  }
+  return data;
+}
+
+async function pollJobUntilComplete(itemId, jobId) {
+  let delay = JOB_POLL_INTERVAL_MS;
+  while (true) {
+    const reference = await getQueueItemReference(itemId);
+    if (!reference) {
+      return;
+    }
+
+    let statusData;
+    try {
+      statusData = await requestJobStatus(jobId);
+    } catch (error) {
+      console.error('Job status request failed', error);
+      await sleep(delay);
+      delay = Math.min(delay + 2_000, JOB_POLL_MAX_INTERVAL_MS);
+      continue;
+    }
+
+    const status = statusData.status;
+    if (status === 'ready') {
+      const markdown = statusData.markdown;
+      if (typeof markdown !== 'string' || !markdown) {
+        await markQueueItemError(itemId, 'Backend returned an empty document.');
+        return;
+      }
+      await moveQueueItemToReady(itemId, statusData);
+      return;
+    }
+
+    if (status === 'error') {
+      await markQueueItemError(itemId, statusData.error || 'Conversion failed');
+      return;
+    }
+
+    await updateQueueItemJobStatus(itemId, status);
+    await sleep(delay);
+    delay = Math.min(delay + 2_000, JOB_POLL_MAX_INTERVAL_MS);
+  }
+}
+
+async function resumeProcessingJobs() {
+  const state = await getState();
+  for (const entry of state.queue || []) {
+    if (entry?.status === 'processing' && entry.jobId) {
+      trackJobPoll(entry.jobId, () => pollJobUntilComplete(entry.id, entry.jobId));
+    }
+  }
 }
 
 chrome.runtime.onInstalled.addListener(() => {
@@ -91,6 +342,8 @@ async function retryItem(id) {
   }
   item.status = 'pending';
   delete item.error;
+  delete item.jobId;
+  delete item.jobStatus;
   await setState(state);
   processQueue();
   return {};
@@ -170,42 +423,31 @@ async function processQueue() {
   processingQueue = true;
 
   try {
+    await resumeProcessingJobs();
     while (true) {
-      let state = await getState();
+      const state = await getState();
       const index = state.queue.findIndex((item) => item.status === 'pending');
       if (index === -1) {
         break;
       }
 
       const item = state.queue[index];
-      item.status = 'processing';
-      item.error = undefined;
-      await setState(state);
+
+      if (item.jobId) {
+        continue;
+      }
 
       try {
-        const markdown = await fetchMarkdownForItem(item);
-        state = await getState();
-        const queueIndex = state.queue.findIndex((entry) => entry.id === item.id);
-        if (queueIndex !== -1) {
-          state.queue.splice(queueIndex, 1);
-          state.ready.push({
-            id: item.id,
-            url: item.url,
-            filename: item.filename,
-            markdown,
-            completedAt: Date.now()
-          });
-          await setState(state);
+        const jobId = await submitConversionJob(item);
+        await storeQueueItemJobId(item.id, jobId);
+        const updated = await setQueueItemProcessing(item.id);
+        if (!updated) {
+          continue;
         }
+        await trackJobPoll(jobId, () => pollJobUntilComplete(item.id, jobId));
       } catch (error) {
         console.error('Queue item failed', error);
-        state = await getState();
-        const queueIndex = state.queue.findIndex((entry) => entry.id === item.id);
-        if (queueIndex !== -1) {
-          state.queue[queueIndex].status = 'error';
-          state.queue[queueIndex].error = error.message || 'Conversion failed';
-          await setState(state);
-        }
+        await markQueueItemError(item.id, error instanceof Error ? error.message : 'Conversion failed');
       }
     }
   } finally {
@@ -236,75 +478,6 @@ function derivePdfUploadName(url) {
     return fallback;
   }
   return `${fallback || 'document'}.pdf`;
-}
-
-async function fetchMarkdownForItem(item) {
-
-   if (item.url.startsWith('file://')) {
-      try {
-        const allowed = await chrome.extension.isAllowedFileSchemeAccess();
-        if (!allowed) {
-          throw new Error('Allow access to file URLs in chrome://extensions');
-        }
-      } catch (error) {
-        if (error instanceof Error) {
-          throw error;
-        }
-        throw new Error('Unable to verify file URL permissions');
-      }
-
-      const pdfResponse = await fetch(item.url);
-      if (!pdfResponse.ok) {
-        throw await buildError(pdfResponse);
-      }
-
-      const pdfBlob = await pdfResponse.blob();
-      if (!pdfBlob || pdfBlob.size === 0) {
-        throw new Error('Received empty PDF when attempting upload.');
-      }
-
-      const formData = new FormData();
-
-      formData.append('file', pdfBlob, derivePdfUploadName(item.url));
-      if (item.filename) {
-        formData.append('filename', item.filename);
-      }
-
-      const response = await fetch(`${API_BASE_URL}/${item.contentType.endpoint}`, {
-        method: 'POST',
-        headers: {
-          Accept: 'text/markdown',
-        },
-        body: formData,
-      });
-
-      if (!response.ok) {
-        const raw = await response.clone().text();
-        console.error('[pdf upload] failed', response.status, raw);
-        throw await buildError(response);
-      }
-
-      return await response.text();
-    }
-
-  const payload = {
-    url: item.url,
-    filename: item.filename,
-    cookies: item.cookies,
-    html: item.html,
-  };
-
-  const response = await fetch(`${API_BASE_URL}/${item.contentType.endpoint}`, {
-    method: 'POST',
-    headers: REQUEST_HEADERS,
-    body: JSON.stringify(payload),
-  });
-
-  if (!response.ok) {
-    throw await buildError(response);
-  }
-
-  return await response.text();
 }
 
 
