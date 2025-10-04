@@ -230,6 +230,9 @@ async function requestJobStatus(jobId) {
 
 async function pollJobUntilComplete(itemId, jobId) {
   let delay = JOB_POLL_INTERVAL_MS;
+  let consecutiveFailures = 0;
+  const MAX_CONSECUTIVE_FAILURES = 5;
+
   while (true) {
     const reference = await getQueueItemReference(itemId);
     if (!reference) {
@@ -239,8 +242,16 @@ async function pollJobUntilComplete(itemId, jobId) {
     let statusData;
     try {
       statusData = await requestJobStatus(jobId);
+      consecutiveFailures = 0;
     } catch (error) {
       console.error('Job status request failed', error);
+      consecutiveFailures++;
+
+      if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+        await markQueueItemError(itemId, error instanceof Error ? error.message : 'Job status check failed repeatedly');
+        return;
+      }
+
       await sleep(delay);
       delay = Math.min(delay + 2_000, JOB_POLL_MAX_INTERVAL_MS);
       continue;
