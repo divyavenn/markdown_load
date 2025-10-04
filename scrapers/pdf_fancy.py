@@ -327,9 +327,9 @@ def main():
         f.write(combined)
     print(f"Wrote markdown to {OUT_PATH}")
 
-def convert_pdf_fancy_path(pdf_path: str) -> str:
+def convert_pdf_fancy_path(pdf_path: str, openai_api_key: Optional[str] = None) -> str:
     """Convert a PDF file to markdown using the fancy marker-based converter."""
-    api_key = os.getenv("OPENAI_API_KEY")
+    api_key = openai_api_key or os.getenv("OPENAI_API_KEY")
     if not api_key:
         raise ValueError("OPENAI_API_KEY missing")
     base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
@@ -426,7 +426,7 @@ def convert_pdf_fancy_path(pdf_path: str) -> str:
     return "\n\n".join(results)
 
 
-def convert_pdf_fancy_bytes(data: bytes) -> str:
+def convert_pdf_fancy_bytes(data: bytes, openai_api_key: Optional[str] = None) -> str:
     """Convert PDF bytes to markdown using the fancy marker-based converter."""
     temp_path: Optional[str] = None
     try:
@@ -434,7 +434,7 @@ def convert_pdf_fancy_bytes(data: bytes) -> str:
             temp_path = tmp.name
             tmp.write(data)
 
-        return convert_pdf_fancy_path(temp_path)
+        return convert_pdf_fancy_path(temp_path, openai_api_key)
     finally:
         if temp_path and os.path.exists(temp_path):
             os.unlink(temp_path)

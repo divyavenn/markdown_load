@@ -1,6 +1,7 @@
 import { ContentTypes, contentTypes } from './content-types.js';
 
 const STATE_KEY = 'markdownLoadState';
+const SETTINGS_KEY = 'markdownLoadSettings';
 
 const queueList = document.getElementById('queue-list');
 const readyList = document.getElementById('ready-list');
@@ -8,11 +9,20 @@ const filenameInput = document.getElementById('filename');
 const queueButton = document.getElementById('queue');
 const statusLabel = document.getElementById('status');
 
+const mainView = document.getElementById('main-view');
+const settingsView = document.getElementById('settings-view');
+const settingsButton = document.getElementById('settings-button');
+const backButton = document.getElementById('back-button');
+const openaiKeyInput = document.getElementById('openai-key');
+const clearOpenaiKeyButton = document.getElementById('clear-openai-key');
+const saveSettingsButton = document.getElementById('save-settings');
+const settingsStatus = document.getElementById('settings-status');
+
 const errorIcon = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 640 640\"><!--!Font Awesome Free v7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free Copyright 2025 Fonticons, Inc.--><path d=\"M320 64C334.7 64 348.2 72.1 355.2 85L571.2 485C577.9 497.4 577.6 512.4 570.4 524.5C563.2 536.6 550.1 544 536 544L104 544C89.9 544 76.8 536.6 69.6 524.5C62.4 512.4 62.1 497.4 68.8 485L284.8 85C291.8 72.1 305.3 64 320 64zM320 416C302.3 416 288 430.3 288 448C288 465.7 302.3 480 320 480C337.7 480 352 465.7 352 448C352 430.3 337.7 416 320 416zM320 224C301.8 224 287.3 239.5 288.6 257.7L296 361.7C296.9 374.2 307.4 384 319.9 384C332.5 384 342.9 374.3 343.8 361.7L351.2 257.7C352.5 239.5 338.1 224 319.8 224z\"/></svg>"
 const downloadIcon = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" aria-hidden="true"><path d="M320 64C178.6 64 64 178.6 64 320C64 461.4 178.6 576 320 576C461.4 576 576 461.4 576 320C576 178.6 461.4 64 320 64zM308.7 451.3L204.7 347.3C200.1 342.7 198.8 335.8 201.2 329.9C203.6 324 209.5 320 216 320L272 320L272 224C272 206.3 286.3 192 304 192L336 192C353.7 192 368 206.3 368 224L368 320L424 320C430.5 320 436.3 323.9 438.8 329.9C441.3 335.9 439.9 342.8 435.3 347.3L331.3 451.3C325.1 457.5 314.9 457.5 308.7 451.3z" /></svg>';
 const xIcon = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640"><!--!Font Awesome Free v7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free Copyright 2025 Fonticons, Inc.--><path d="M183.1 137.4C170.6 124.9 150.3 124.9 137.8 137.4C125.3 149.9 125.3 170.2 137.8 182.7L275.2 320L137.9 457.4C125.4 469.9 125.4 490.2 137.9 502.7C150.4 515.2 170.7 515.2 183.2 502.7L320.5 365.3L457.9 502.6C470.4 515.1 490.7 515.1 503.2 502.6C515.7 490.1 515.7 469.8 503.2 457.3L365.8 320L503.1 182.6C515.6 170.1 515.6 149.8 503.1 137.3C490.6 124.8 470.3 124.8 457.8 137.3L320.5 274.7L183.1 137.4z"/></svg>';
 const trashcanIcon = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" aria-hidden="true"><path d="M232.7 69.9L224 96L128 96C110.3 96 96 110.3 96 128C96 145.7 110.3 160 128 160L512 160C529.7 160 544 145.7 544 128C544 110.3 529.7 96 512 96L416 96L407.3 69.9C402.9 56.8 390.7 48 376.9 48L263.1 48C249.3 48 237.1 56.8 232.7 69.9zM512 208L128 208L149.1 531.1C150.7 556.4 171.7 576 197 576L443 576C468.3 576 489.3 556.4 490.9 531.1L512 208z" /></svg>';
-
+const settingsIcon = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640"><!--!Font Awesome Free v7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free Copyright 2025 Fonticons, Inc.--><path d="M259.1 73.5C262.1 58.7 275.2 48 290.4 48L350.2 48C365.4 48 378.5 58.7 381.5 73.5L396 143.5C410.1 149.5 423.3 157.2 435.3 166.3L503.1 143.8C517.5 139 533.3 145 540.9 158.2L570.8 210C578.4 223.2 575.7 239.8 564.3 249.9L511 297.3C511.9 304.7 512.3 312.3 512.3 320C512.3 327.7 511.8 335.3 511 342.7L564.4 390.2C575.8 400.3 578.4 417 570.9 430.1L541 481.9C533.4 495 517.6 501.1 503.2 496.3L435.4 473.8C423.3 482.9 410.1 490.5 396.1 496.6L381.7 566.5C378.6 581.4 365.5 592 350.4 592L290.6 592C275.4 592 262.3 581.3 259.3 566.5L244.9 496.6C230.8 490.6 217.7 482.9 205.6 473.8L137.5 496.3C123.1 501.1 107.3 495.1 99.7 481.9L69.8 430.1C62.2 416.9 64.9 400.3 76.3 390.2L129.7 342.7C128.8 335.3 128.4 327.7 128.4 320C128.4 312.3 128.9 304.7 129.7 297.3L76.3 249.8C64.9 239.7 62.3 223 69.8 209.9L99.7 158.1C107.3 144.9 123.1 138.9 137.5 143.7L205.3 166.2C217.4 157.1 230.6 149.5 244.6 143.4L259.1 73.5zM320.3 400C364.5 399.8 400.2 363.9 400 319.7C399.8 275.5 363.9 239.8 319.7 240C275.5 240.2 239.8 276.1 240 320.3C240.2 364.5 276.1 400.2 320.3 400z"/></svg>'
 
 let activeTab = null;
 let activeContentType = null;
@@ -314,6 +324,8 @@ async function prepareUI(url, activeContentType) {
     capturedHtml = await capturePageHtml(activeTab.id);
   }
 
+  const settings = await loadSettings();
+
   await sendMessage({
     type: 'enqueue',
     url: targetUrl,
@@ -321,6 +333,7 @@ async function prepareUI(url, activeContentType) {
     contentType: activeContentType,
     filename: filenameInput.value,
     html: capturedHtml,
+    openaiApiKey: settings.openaiApiKey || null,
   });
   setStatus('downloading! feel free to close this tab and add more :)');
 }
@@ -502,7 +515,7 @@ queueButton.addEventListener('click', async () => {
   }
 });
 
-  chrome.storage.onChanged.addListener((changes, areaName) => {
+chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName !== 'local' || !changes[STATE_KEY]) {
     return;
   }
@@ -511,5 +524,109 @@ queueButton.addEventListener('click', async () => {
   renderReady(next.ready || []);
 });
 
+// Settings functions
+async function loadSettings() {
+  return new Promise((resolve) => {
+    chrome.storage.sync.get(SETTINGS_KEY, (result) => {
+      resolve(result[SETTINGS_KEY] || {});
+    });
+  });
+}
+
+async function saveSettings(settings) {
+  return new Promise((resolve) => {
+    chrome.storage.sync.set({ [SETTINGS_KEY]: settings }, resolve);
+  });
+}
+
+function showSettingsView() {
+  mainView.style.display = 'none';
+  settingsView.style.display = 'flex';
+}
+
+function showMainView() {
+  settingsView.style.display = 'none';
+  mainView.style.display = 'flex';
+}
+
+function setSettingsStatus(message, duration = 3000) {
+  settingsStatus.textContent = message;
+  if (duration > 0) {
+    setTimeout(() => {
+      settingsStatus.textContent = '';
+    }, duration);
+  }
+}
+
+async function validateOpenAIKey(apiKey) {
+  if (!apiKey || !apiKey.trim()) {
+    return { valid: false, error: 'API key is empty' };
+  }
+
+  try {
+    const response = await fetch('https://api.openai.com/v1/models', {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    if (response.ok) {
+      return { valid: true };
+    } else if (response.status === 401) {
+      return { valid: false, error: 'Invalid API key' };
+    } else {
+      return { valid: false, error: `Validation failed (${response.status})` };
+    }
+  } catch (error) {
+    return { valid: false, error: 'Network error during validation' };
+  }
+}
+
+settingsButton.addEventListener('click', async () => {
+  const settings = await loadSettings();
+  openaiKeyInput.value = settings.openaiApiKey || '';
+  showSettingsView();
+});
+
+backButton.addEventListener('click', () => {
+  showMainView();
+  settingsStatus.textContent = '';
+});
+
+clearOpenaiKeyButton.addEventListener('click', () => {
+  openaiKeyInput.value = '';
+  openaiKeyInput.focus();
+});
+
+saveSettingsButton.addEventListener('click', async () => {
+  const apiKey = openaiKeyInput.value.trim();
+
+  saveSettingsButton.disabled = true;
+  setSettingsStatus('Validating...', 0);
+
+  if (apiKey) {
+    const validation = await validateOpenAIKey(apiKey);
+    if (!validation.valid) {
+      setSettingsStatus(validation.error || 'Invalid API key');
+      saveSettingsButton.disabled = false;
+      return;
+    }
+  }
+
+  const settings = {
+    openaiApiKey: apiKey
+  };
+
+  await saveSettings(settings);
+  setSettingsStatus('Settings saved!');
+  saveSettingsButton.disabled = false;
+
+  setTimeout(() => {
+    showMainView();
+    settingsStatus.textContent = '';
+  }, 1000);
+});
 
 initialise();

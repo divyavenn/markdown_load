@@ -178,6 +178,9 @@ async function submitConversionJob(item) {
     if (item.filename) {
       formData.append('filename', item.filename);
     }
+    if (item.openaiApiKey) {
+      formData.append('openaiApiKey', item.openaiApiKey);
+    }
 
     const response = await fetch(`${API_BASE_URL}/${item.contentType.endpoint}`, {
       method: 'POST',
@@ -196,6 +199,10 @@ async function submitConversionJob(item) {
     cookies: item.cookies,
     html: item.html,
   };
+
+  if (item.openaiApiKey) {
+    payload.openaiApiKey = item.openaiApiKey;
+  }
 
   const response = await fetch(`${API_BASE_URL}/${item.contentType.endpoint}`, {
     method: 'POST',
@@ -324,7 +331,7 @@ async function handleMessage(message) {
 }
 
 
-async function enqueueItem({ type, url, cookies, contentType, filename, html }) {
+async function enqueueItem({ type, url, cookies, contentType, filename, html, openaiApiKey }) {
   if (!url) {
     throw new Error('Missing URL');
   }
@@ -337,6 +344,7 @@ async function enqueueItem({ type, url, cookies, contentType, filename, html }) 
     cookies,
     filename,
     html,
+    openaiApiKey: openaiApiKey || null,
     status: 'pending',
     addedAt: Date.now()
   });

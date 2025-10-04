@@ -28,6 +28,7 @@ class ConvertRequest(BaseModel):
     filename: str | None = None
     cookies: dict[str, Any] = Field(default_factory=dict)
     html: str | None = None
+    openaiApiKey: str | None = None
 
 
 def cookies_to_lookup(cookies: dict[str, Any]) -> dict[str, str]:
@@ -146,7 +147,7 @@ async def enqueue_job(task: Callable[[], Awaitable[Dict[str, str]]]) -> Dict[str
     return {'jobId': job_id, 'status': 'processing'}
 
 
-def convert_remote_pdf_sync(url: str, provided_filename: str | None, cookies: Dict[str, str]) -> Dict[str, str]:
+def convert_remote_pdf_sync(url: str, provided_filename: str | None, cookies: Dict[str, str], openai_api_key: str | None = None) -> Dict[str, str]:
     response = None
     temp_path: str | None = None
     try:
@@ -178,7 +179,7 @@ def convert_remote_pdf_sync(url: str, provided_filename: str | None, cookies: Di
     return {'markdown': markdown, 'filename': filename}
 
 
-def convert_pdf_stream_sync(data: bytes, provided_filename: str | None, original_name: str | None) -> Dict[str, str]:
+def convert_pdf_stream_sync(data: bytes, provided_filename: str | None, original_name: str | None, openai_api_key: str | None = None) -> Dict[str, str]:
     if not data:
         raise HTTPException(status_code=400, detail="No PDF content received.")
 
@@ -193,7 +194,7 @@ def convert_pdf_stream_sync(data: bytes, provided_filename: str | None, original
     return {'markdown': markdown, 'filename': filename}
 
 
-def convert_remote_pdf_fancy_sync(url: str, provided_filename: str | None, cookies: Dict[str, str]) -> Dict[str, str]:
+def convert_remote_pdf_fancy_sync(url: str, provided_filename: str | None, cookies: Dict[str, str], openai_api_key: str | None = None) -> Dict[str, str]:
     response = None
     temp_path: str | None = None
     try:
@@ -209,7 +210,7 @@ def convert_remote_pdf_fancy_sync(url: str, provided_filename: str | None, cooki
         if temp_path is None or os.path.getsize(temp_path) == 0:
             raise HTTPException(status_code=400, detail="Fetched PDF is empty.")
 
-        markdown = convert_pdf_fancy_path(temp_path)
+        markdown = convert_pdf_fancy_path(temp_path, openai_api_key)
     except HTTPException:
         raise
     except Exception as exc:
@@ -225,12 +226,12 @@ def convert_remote_pdf_fancy_sync(url: str, provided_filename: str | None, cooki
     return {'markdown': markdown, 'filename': filename}
 
 
-def convert_pdf_fancy_stream_sync(data: bytes, provided_filename: str | None, original_name: str | None) -> Dict[str, str]:
+def convert_pdf_fancy_stream_sync(data: bytes, provided_filename: str | None, original_name: str | None, openai_api_key: str | None = None) -> Dict[str, str]:
     if not data:
         raise HTTPException(status_code=400, detail="No PDF content received.")
 
     try:
-        markdown = convert_pdf_fancy_bytes(data)
+        markdown = convert_pdf_fancy_bytes(data, openai_api_key)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"PDF fancy conversion failed: {exc}") from exc
 
@@ -329,6 +330,7 @@ async def download_pdf(payload: ConvertRequest) -> Dict[str, str]:
     url = str(payload.url)
     cookie_lookup = cookies_to_lookup(payload.cookies)
     provided_filename = payload.filename
+    openai_api_key = payload.openaiApiKey
 
     async def task() -> Dict[str, str]:
         return await asyncio.to_thread(
@@ -336,13 +338,14 @@ async def download_pdf(payload: ConvertRequest) -> Dict[str, str]:
             url,
             provided_filename,
             cookie_lookup,
+            openai_api_key,
         )
 
     return await enqueue_job(task)
 
 
 @app.post("/convert-pdf/stream", status_code=status.HTTP_202_ACCEPTED)
-async def upload_pdf(file: UploadFile = File(...), filename: str | None = Form(None)) -> Dict[str, str]:
+async def upload_pdf(file: UploadFile = File(...), filename: str | None = Form(None), openaiApiKey: str | None = Form(None)) -> Dict[str, str]:
     original_name = file.filename
     try:
         data = await file.read()
@@ -362,6 +365,7 @@ async def upload_pdf(file: UploadFile = File(...), filename: str | None = Form(N
             data,
             provided_filename,
             original_name,
+            openaiApiKey,
         )
 
     return await enqueue_job(task)
@@ -372,6 +376,7 @@ async def download_pdf_fancy(payload: ConvertRequest) -> Dict[str, str]:
     url = str(payload.url)
     cookie_lookup = cookies_to_lookup(payload.cookies)
     provided_filename = payload.filename
+    openai_api_key = payload.openaiApiKey
 
     async def task() -> Dict[str, str]:
         return await asyncio.to_thread(
@@ -379,13 +384,14 @@ async def download_pdf_fancy(payload: ConvertRequest) -> Dict[str, str]:
             url,
             provided_filename,
             cookie_lookup,
+            openai_api_key,
         )
 
     return await enqueue_job(task)
 
 
 @app.post("/convert-pdf-fancy/stream", status_code=status.HTTP_202_ACCEPTED)
-async def upload_pdf_fancy(file: UploadFile = File(...), filename: str | None = Form(None)) -> Dict[str, str]:
+async def upload_pdf_fancy(file: UploadFile = File(...), filename: str | None = Form(None), openaiApiKey: str | None = Form(None)) -> Dict[str, str]:
     original_name = file.filename
     try:
         data = await file.read()
@@ -405,6 +411,7 @@ async def upload_pdf_fancy(file: UploadFile = File(...), filename: str | None = 
             data,
             provided_filename,
             original_name,
+            openaiApiKey,
         )
 
     return await enqueue_job(task)
