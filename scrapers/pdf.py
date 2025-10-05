@@ -2,9 +2,7 @@ from marker.converters.pdf import PdfConverter
 from marker.models import create_model_dict
 from marker.output import text_from_rendered
 from marker.config.parser import ConfigParser
-import marker
 from dotenv import load_dotenv
-import os
 from io import BytesIO
 from pathlib import Path
 

@@ -1,26 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-"""
-Ingest YouTube content by preferring human captions; if unavailable, fallback to
-downloading audio and transcribing locally with Whisper.
-
-Requirements (install into your environment):
-  pip install yt-dlp webvtt-py
-  pip install openai-whisper   # or: pip install faster-whisper
-
-Usage:
-  python ingest_youtube.py --url "https://www.youtube.com/watch?v=VIDEO_ID" \
-      --out ./documents --lang en --model small
-
-Outputs:
-  - Writes a Markdown transcript to <out>/<video_id>.transcript.md
-  - If subtitles are present (human), exports them from VTT
-  - Otherwise downloads audio and runs Whisper
-"""
-
 from __future__ import annotations
-
 import argparse
 import os
 import sys
