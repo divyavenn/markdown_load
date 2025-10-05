@@ -25,4 +25,6 @@ dependencies = [
     "pypdf2>=3.0.1",
     "python-multipart>=0.0.20",
     "faster-whisper>=1.2.0",
+    "av<16; platform_system == 'Linux' and platform_machine == 'x86_64'"
 ]
+
