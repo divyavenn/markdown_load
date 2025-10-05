@@ -2,8 +2,6 @@
 # -*- coding: utf-8 -*-
 
 from __future__ import annotations
-import argparse
-import os
 import sys
 from dataclasses import dataclass
 import tempfile
@@ -169,29 +167,29 @@ def transcribe_with_openai_whisper_api(audio_path: Path, openai_api_key: str, la
         raise RuntimeError(f"OpenAI Whisper API transcription failed: {exc}") from exc
 
 
-def transcribe_with_whisper(audio_path: Path, model_name: str, language: Optional[str]) -> str:
-    # Prefer openai-whisper for simplicity; can be replaced with faster-whisper if desired
+def transcribe_with_whisper(audio_path: Path, model_name: str = "small", language: Optional[str] = None) -> str:
+    """
+    Transcribe audio using faster-whisper (lightweight, quantized Whisper implementation).
+    Install with: pip install faster-whisper
+    """
     try:
-        import whisper  # type: ignore
+        from faster_whisper import WhisperModel
     except Exception as exc:
         raise SystemExit(
-            "openai-whisper is required. Install with: pip install openai-whisper\n"
+            "faster-whisper is required. Install with: pip install faster-whisper\n"
             "Note: ffmpeg must also be installed and on PATH."
         ) from exc
 
     try:
-        model = whisper.load_model(model_name)
-        result = model.transcribe(str(audio_path), language=language)
-        text = result.get("text", "").strip()
-        return text
+        # load quantized model to reduce RAM usage
+        model = WhisperModel("small", device="cpu", compute_type="int8")
+
+        segments, info = model.transcribe(str(audio_path), language=language)
+        text_lines = [segment.text.strip() for segment in segments if segment.text.strip()]
+        return "\n".join(text_lines).strip()
+
     except Exception as exc:
-        # Common failure: ffmpeg missing
-        if "ffmpeg" in str(exc).lower():
-            raise SystemExit(
-                "ffmpeg is required by Whisper to decode audio.\n"
-                "Install it (e.g., brew install ffmpeg) and retry."
-            ) from exc
-        raise
+        raise RuntimeError(f"Faster-Whisper transcription failed: {exc}") from exc
 
 
 def build_markdown_transcript(
@@ -220,7 +218,6 @@ def build_markdown_transcript(
 
     parts.append("")
     return "\n".join(parts)
-
 
 
 def _locate_vtt(out_dir: Path, video_id: str) -> Path:
