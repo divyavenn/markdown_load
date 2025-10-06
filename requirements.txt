@@ -96,7 +96,7 @@ filetype==1.2.0
     #   surya-ocr
 flatbuffers==25.9.23
     # via onnxruntime
-frozenlist==1.7.0
+frozenlist==1.8.0
     # via
     #   aiohttp
     #   aiosignal
@@ -426,7 +426,7 @@ websockets==15.0.1
     # via google-genai
 webvtt-py==0.5.1
     # via markdownload (pyproject.toml)
-yarl==1.20.1
+yarl==1.21.0
     # via aiohttp
 yt-dlp==2025.9.26
     # via markdownload (pyproject.toml)

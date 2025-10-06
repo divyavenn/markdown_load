@@ -13,6 +13,44 @@ def ensure_directory(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
 
 
+def _create_cookie_file(cookies: Dict[str, str], url: str) -> Path:
+    """Create a Netscape cookie file for yt-dlp from a dictionary of cookies."""
+    from urllib.parse import urlparse
+
+    parsed = urlparse(url)
+    hostname = parsed.hostname or "youtube.com"
+    # Ensure domain starts with a dot for wildcard matching
+    domain = f".{hostname}" if not hostname.startswith(".") else hostname
+
+    # Create temporary cookie file in Netscape format
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", prefix="yt_cookies_", delete=False) as tmp:
+        cookie_file = Path(tmp.name)
+        tmp.write("# Netscape HTTP Cookie File\n")
+        tmp.write("# This file was generated for yt-dlp\n")
+        tmp.write("# https://curl.haxx.se/rfc/cookie_spec.html\n")
+        tmp.write("# This is a generated file! Do not edit.\n\n")
+
+        for name, value in cookies.items():
+            # Skip cookie metadata fields (like _same_site, _expires)
+            if name.endswith("_same_site") or name.endswith("_expires"):
+                continue
+
+            # Netscape format has 7 tab-separated fields:
+            # domain | flag | path | secure | expiration | name | value
+            # Example: .youtube.com	TRUE	/	TRUE	2147483647	CONSENT	YES+1
+
+            # Use a far future expiration (year 2038)
+            expiration = "2147483647"
+
+            # For YouTube cookies, use HTTPS
+            secure = "TRUE"
+
+            # Write the cookie line with proper tab separation
+            tmp.write(f"{domain}\tTRUE\t/\t{secure}\t{expiration}\t{name}\t{value}\n")
+
+    return cookie_file
+
+
 @dataclass
 class VideoSelection:
     video_id: str
@@ -20,7 +58,7 @@ class VideoSelection:
     chosen_lang: Optional[str]
 
 
-def extract_video_info(url: str) -> Dict[str, Any]:
+def extract_video_info(url: str, cookies: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
     try:
         from yt_dlp import YoutubeDL
     except Exception as exc:
@@ -34,9 +72,19 @@ def extract_video_info(url: str) -> Dict[str, Any]:
         "no_warnings": True,
     }
 
-    with YoutubeDL(opts) as ydl:
-        info = ydl.extract_info(url, download=False)
-    return info
+    # Add cookie support
+    cookie_file = None
+    if cookies:
+        cookie_file = _create_cookie_file(cookies, url)
+        opts["cookiefile"] = str(cookie_file)
+
+    try:
+        with YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+        return info
+    finally:
+        if cookie_file and cookie_file.exists():
+            cookie_file.unlink()
 
 
 def select_human_subtitle_lang(info: Dict[str, Any], preferred_lang: Optional[str]) -> Optional[str]:
@@ -54,7 +102,7 @@ def select_human_subtitle_lang(info: Dict[str, Any], preferred_lang: Optional[st
     return None
 
 
-def download_human_subtitles(url: str, out_dir: Path, video_id: str, lang: str) -> Path:
+def download_human_subtitles(url: str, out_dir: Path, video_id: str, lang: str, cookies: Optional[Dict[str, str]] = None) -> Path:
     try:
         from yt_dlp import YoutubeDL
     except Exception as exc:
@@ -73,8 +121,19 @@ def download_human_subtitles(url: str, out_dir: Path, video_id: str, lang: str) 
         "quiet": True,
         "no_warnings": True,
     }
-    with YoutubeDL(opts) as ydl:
-        ydl.download([url])
+
+    # Add cookie support
+    cookie_file = None
+    if cookies:
+        cookie_file = _create_cookie_file(cookies, url)
+        opts["cookiefile"] = str(cookie_file)
+
+    try:
+        with YoutubeDL(opts) as ydl:
+            ydl.download([url])
+    finally:
+        if cookie_file and cookie_file.exists():
+            cookie_file.unlink()
 
     vtt_path = out_dir / f"{video_id}.NA.{lang}.vtt"
     return vtt_path
@@ -96,7 +155,7 @@ def vtt_to_text(vtt_path: Path) -> str:
     return "\n".join(lines).strip()
 
 
-def download_audio(url: str, out_dir: Path, video_id: str) -> Path:
+def download_audio(url: str, out_dir: Path, video_id: str, cookies: Optional[Dict[str, str]] = None) -> Path:
     try:
         from yt_dlp import YoutubeDL
     except Exception as exc:
@@ -113,6 +172,13 @@ def download_audio(url: str, out_dir: Path, video_id: str) -> Path:
         "quiet": False,  # Enable output for debugging
         "no_warnings": False,
     }
+
+    # Add cookie support
+    cookie_file = None
+    if cookies:
+        cookie_file = _create_cookie_file(cookies, url)
+        opts["cookiefile"] = str(cookie_file)
+
     try:
         with YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=True)
@@ -120,6 +186,9 @@ def download_audio(url: str, out_dir: Path, video_id: str) -> Path:
             filename = ydl.prepare_filename(info)
     except Exception as exc:
         raise RuntimeError(f"Failed to download audio from YouTube: {exc}") from exc
+    finally:
+        if cookie_file and cookie_file.exists():
+            cookie_file.unlink()
 
     # If a video container was downloaded (e.g., .webm), prefer the produced file path
     audio_path = Path(filename)
@@ -231,15 +300,16 @@ def fetch_youtube_markdown(
     *,
     preferred_lang: str = "en",
     whisper_model: str = "small",
-    openai_api_key: str | None = None
+    openai_api_key: str | None = None,
+    cookies: Optional[Dict[str, str]] = None
 ) -> str:
     print(f"[YouTube] Starting conversion for: {url}")
     with tempfile.TemporaryDirectory(prefix="yt_", suffix="_extract") as tmp:
         out_dir = Path(tmp)
         ensure_directory(out_dir)
 
-        print(f"[YouTube] Extracting video info...")
-        info = extract_video_info(url)
+        print("[YouTube] Extracting video info...")
+        info = extract_video_info(url, cookies=cookies)
         video_id = info.get("id") or "video"
         title = info.get("title") or video_id
         print(f"[YouTube] Video: {title} ({video_id})")
@@ -248,34 +318,38 @@ def fetch_youtube_markdown(
 
         if chosen_lang:
             print(f"[YouTube] Found human subtitles in language: {chosen_lang}")
-            vtt_path = download_human_subtitles(url, out_dir, video_id, chosen_lang)
+            vtt_path = download_human_subtitles(url, out_dir, video_id, chosen_lang, cookies=cookies)
             try:
                 subtitle_path = vtt_path if vtt_path.exists() else _locate_vtt(out_dir, video_id)
             except RuntimeError:
                 subtitle_path = _locate_vtt(out_dir, video_id)
             plain_text = vtt_to_text(subtitle_path)
-            print(f"[YouTube] Subtitles converted successfully")
+            print("[YouTube] Subtitles converted successfully")
             return build_markdown_transcript(title, url, chosen_lang, plain_text)
 
-        print(f"[YouTube] No subtitles found, will need transcription")
+        print("[YouTube] No subtitles found, will need transcription")
         # If no subtitles available, we need transcription
         # Use OpenAI Whisper API if API key is provided, otherwise use local Whisper
         if openai_api_key:
-            print(f"[YouTube] Using OpenAI Whisper API for transcription")
-            print(f"[YouTube] Downloading audio...")
-            audio_path = download_audio(url, out_dir, video_id)
+            print("[YouTube] Using OpenAI Whisper API for transcription")
+            print("[YouTube] Downloading audio...")
+            audio_path = download_audio(url, out_dir, video_id, cookies=cookies)
             print(f"[YouTube] Audio downloaded to: {audio_path}")
-            try: 
+            try:
                 text = transcribe_with_openai_whisper_api(audio_path, openai_api_key, preferred_lang)
-            except Exception as exc:
-                print(f"[YouTube] OpenAI did not work, starting local Whisper transcription (this may take a while)...")
+            except Exception:
+                print("[YouTube] OpenAI did not work, starting local Whisper transcription (this may take a while)...")
                 text = transcribe_with_whisper(audio_path, whisper_model, preferred_lang)
         else:
-            print(f"[YouTube] Checking for local Whisper installation...")
+            print("[YouTube] Checking for local Whisper installation...")
             # Check if local Whisper is available before downloading audio
             try:
-                import whisper  # type: ignore
-                print(f"[YouTube] Local Whisper found, using it for transcription")
+                import importlib.util
+                whisper_spec = importlib.util.find_spec("whisper")
+                if whisper_spec is not None:
+                    print("[YouTube] Local Whisper found, using it for transcription")
+                else:
+                    raise ImportError("whisper not found")
             except ImportError:
                 raise RuntimeError(
                     "No subtitles found for this video. "
@@ -283,20 +357,20 @@ def fetch_youtube_markdown(
                     "pip install openai-whisper"
                 )
 
-            print(f"[YouTube] Downloading audio...")
-            audio_path = download_audio(url, out_dir, video_id)
+            print("[YouTube] Downloading audio...")
+            audio_path = download_audio(url, out_dir, video_id, cookies=cookies)
             print(f"[YouTube] Audio downloaded to: {audio_path}")
-            print(f"[YouTube] Starting local Whisper transcription (this may take a while)...")
+            print("[YouTube] Starting local Whisper transcription (this may take a while)...")
             text = transcribe_with_whisper(audio_path, whisper_model, preferred_lang)
 
         if not text:
             raise RuntimeError("Transcription produced empty output.")
-        print(f"[YouTube] Conversion complete")
+        print("[YouTube] Conversion complete")
         return build_markdown_transcript(title, url, preferred_lang, text)
 
 
-async def convert_youtube(url: str, openai_api_key: str | None = None) -> str:
-    return await asyncio.to_thread(fetch_youtube_markdown, url, openai_api_key=openai_api_key)
+async def convert_youtube(url: str, openai_api_key: str | None = None, cookies: Optional[Dict[str, str]] = None) -> str:
+    return await asyncio.to_thread(fetch_youtube_markdown, url, openai_api_key=openai_api_key, cookies=cookies)
 
 
 def main(url) -> None:

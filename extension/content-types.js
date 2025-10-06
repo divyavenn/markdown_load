@@ -47,7 +47,7 @@ export const ContentTypes = Object.freeze({
     regex: YOUTUBE_URL_REGEX,
     endpoint: 'convert-youtube',
     domain: null,
-    requiredCookies: [],
+    requiredCookies: ['*'],
     errorMessage: 'unable to capture this YouTube page.',
     captureHtml: false,
   },

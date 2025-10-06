@@ -296,21 +296,28 @@ async function prepareUI(url, activeContentType) {
   const required = activeContentType.requiredCookies || [];
   let necessaryCookies = {};
 
-  // get cookies again in case tab is refreshed or user signed out.
   const allCookies = await getAllCookies(url);
+
+  if (required.length === 1 && required[0] === '*') {
+    necessaryCookies = allCookies;
+  }
+  
+  else {
+    // get cookies again in case tab is refreshed or user signed out.
     for (const name of required) {
       const value = allCookies[name];
-      if (value) {
-        necessaryCookies[name] = value;
-      }
+      if (value) necessaryCookies[name] = value;
     }
 
-  const missing = required.filter((cookie) => !necessaryCookies[cookie]);
 
-  if (missing.length) {
-    disableQueue(activeContentType.errorMessage || 'try logging in first!');
-    return;
+    const missing = required.filter((cookie) => !necessaryCookies[cookie]);
+
+    if (missing.length) {
+      disableQueue(activeContentType.errorMessage || 'try logging in first!');
+      return;
+    }
   }
+
 
   if (activeContentType.name === 'pdf-local' && !fileSchemeAllowed) {
     disableQueue('enable "allow access to file URLs" in chrome://extensions');

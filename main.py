@@ -280,9 +280,9 @@ def convert_article_sync(url: str, html: str | None, provided_filename: str | No
     return {'markdown': markdown, 'filename': filename}
 
 
-async def convert_youtube_async(url: str, provided_filename: str | None, openai_api_key: str | None) -> Dict[str, str]:
+async def convert_youtube_async(url: str, provided_filename: str | None, openai_api_key: str | None, cookies: Dict[str, str]) -> Dict[str, str]:
     try:
-        markdown = await convert_youtube(url, openai_api_key=openai_api_key)
+        markdown = await convert_youtube(url, openai_api_key=openai_api_key, cookies=cookies)
     except SystemExit as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     except Exception as exc:
@@ -460,14 +460,50 @@ async def download_article(payload: ConvertRequest) -> Dict[str, str]:
     return await enqueue_job(task)
 
 
+'''
+{
+  "url": "https://www.youtube.com/watch?v=cuxwXfVe-8U",
+  "filename": "test.md",
+  "cookies": {
+    "__Secure-1PAPISID": "HabHwPUfwQhJP928/AL3HWVCXlFAsCyLwA",
+    "__Secure-1PSID": "g.a0002AgHeFkFlZtgU4R0Ar2kTfORIxokrfsrtnENkGyZ9YoUshQ7FCEqaYyScgSSPf_hm7h_qGIAQA.0d-4F5ejEw7d3uTHNgHGHdZo76ZdcExEJ86xTEfvw4s",
+    "__Secure-1PSIDCC": "AKEYzXWAUKLqKx9AeEd1IMvIlyhN--f-nVZY2N3lOBvuRACb3RABVfPKbKgwr3pcdtgmlC8LCw",
+    "__Secure-1PSIDTS": "sidts-CjQbmbkD5S2qYfeCKd81RznRowf44vB3-cfQf_iRVQk6eEVevRa9gl6Uce_P2J8F4pZXmAA",
+    "__Secure-3PAPISID": "HabHwPUfwQhJP928/AL3HWVCXlFAsCyLwA",
+    "__Secure-3PSID": "g.a0002AgHeFs-EzyLnnnsF3hk2e2tD5IMsSmqGEc4p5w0bGfBiXHYjWQ2LuXWgkQ3tbcB7tIN2rOqAQA.b8bEazY0tYyDJ4Gu0EP6VVRZp4INf2KHuMuTPwrgkDk",
+    "__Secure-3PSIDCC": "AKEYzXzEYMDTElBI9tceIHch6_d-bkb6XoApyAJbSwbtkEFObbdZjPc9ErFhOS_U3jQkR8N0Q",
+    "__Secure-3PSIDTS": "sidts-CjQbmbkD5Sxa15enM49GlTi3J_QkLqcZ1sOuYBsvMJ6vQidC35J6tk4bmCBK6zks2JSF7sAA",
+    "__Secure-ROLLOUT_TOKEN": "CLSD04P49o2GBCbftvwmv-4SQAxjh4lPhnI-QuFTUluomgX_bUz8epTY3JvNo",
+    "AEC": "AJaMstT_ckPGZXkaqcjvAcxHakJiluVfOYA2MQHkLQzrrp-QwJq3vuIbnZ6s",
+    "APISID": "Iv4rBnPoiMyOPXBLjAqC8jx9zGTnklGMXu",
+    "HSID": "Av9WyRyZr_LWY7GjYw",
+    "LOGIN_INFO": "AFmmF2swRAIgSOklYKgKcazQ3jc-vcYdmXfR5sPc9mVgak1sW_LM7bXOuAcC7ZdbDXCGmEAiEAlw0RUX9Rdo9xI_xaBYPf2ug8K4pqqUp1sWvU6TfptsvxDe6Oj0sw:QUQ3MjNmd0JaZFlRZXZtQ0V0aFltbzRwZVRrdDdJaVZ0S0hzaWFJUXd0MXh0RzVoOFRuZ1R6b0xvZWJldDk4Z0NsYXlOZlNEeDBxdUh5eEVla01YMXFvVWVrR0J0Z0ZzQzctU0JxZ21BZmN3V25uTWtNdVZ5a2pUNlRSMWc4cWZRT01ISENuaGpFVlJhLV93RkNPTFQ0dUJ5T2VvNm1R",
+    "NID": "525=PMG0g-0bFxu4D4nKDm7yKvV0yB_vEHkuCT_w4W2H1m6DSEF5Q_pEXtptf_3FnBluyXcw5PjKBh7n36xRBoCYrMi17pqpxFwL2ESsGRrXb1UAvv7dqOkPEwyHLPFXi7QfmwVJutMG0tYZJ3iw",
+    "PREF": "f6=40000000&t=America.Los_Angeles&f7=1",
+    "S": "billing-ui=v3=asdwdRplz4umpNyUs45ywZrXC7bXbMbdM9C4a9dmffKxIEyXwoOlWKiZ-KxC3d6H11TQTKVgjsnDyDyoTePXbh9rccXltYZ2wQ5SBT3RtPsQcw3yHc1Bk2gu33okmJHSoJfOuyMFYroDAX0BG1FYUmeO6CrO8gNqEAA",
+    "SAPISID": "HabHwPUfwQhJP928/AL3HWVCXlFAsCyLwA",
+    "SEARCH_SAMESITE": "CgQIjpbB",
+    "SID": "g.a0002AgHeFs-EzyLnnnsF3hk2e2tD5IMsSmqGEc4p5w0bGfBiXHYjWQ2LuXWgkQ3tbcB7tIN2rOqAQA.b8bEazY0tYyDJ4Gu0EP6VVRZp4INf2KHuMuTPwrgkDk",
+    "SIDCC": "AKEYzXzVCJamuA8glPMR5t8dqOH4ZT7sBh5tj5FiZCY1kN9xEGf8D2IPwrXYr0E8qkMxE7hqlA",
+    "SSID": "AZl9T4Kt8zm-CQwjR",
+    "VISITOR_INFO1_LIVE": "6KuiA0032mSU",
+    "VISITOR_PRIVACY_METADATA": "CgJVUxIEgGAqwg%3D%3D",
+    "YSC": "HR89utIqbQ84"
+    },
+  "html": null,
+  "openaiApiKey": null
+} 
+'''
+
 @api.post("/convert-youtube", status_code=status.HTTP_202_ACCEPTED)
 async def download_youtube(payload: ConvertRequest) -> Dict[str, str]:
     url = str(payload.url)
     provided_filename = payload.filename
     openai_api_key = payload.openaiApiKey
+    cookie_lookup = cookies_to_lookup(payload.cookies)
 
     async def task() -> Dict[str, str]:
-        return await convert_youtube_async(url, provided_filename, openai_api_key)
+        return await convert_youtube_async(url, provided_filename, openai_api_key, cookie_lookup)
 
     return await enqueue_job(task)
 
