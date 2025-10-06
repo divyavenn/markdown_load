@@ -22,6 +22,32 @@ from scrapers.pdf_fancy import convert_pdf_fancy_path, convert_pdf_fancy_bytes
 from scrapers.article import fetch_article_markdown
 from scrapers.youtube import convert_youtube
 
+import modal
+
+# FastAPI app
+api = FastAPI(title="Markdown.load API", version="0.1.0")
+
+# Modal app (the deployable “stub”)
+app = modal.App("markdownload-backend")
+
+# Absolute local path to your project root
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+
+
+image = (
+    modal.Image.debian_slim(python_version="3.11")
+    .apt_install("ffmpeg")
+    .pip_install_from_requirements("requirements.txt")  # now resolves /app/requirements.txt
+    # copy your local project into /app inside the image
+    .add_local_dir(PROJECT_ROOT, "/app", copy=True)
+    .workdir("/app")  # make /app the CWD so imports like "scrapers.*" work
+)
+
+@app.function(image=image, keep_warm=1, timeout=600)
+@modal.asgi_app()
+def fastapi_app():
+    return api
+
 
 class ConvertRequest(BaseModel):
     url: HttpUrl
@@ -293,9 +319,9 @@ def convert_substack_sync(url: str, provided_filename: str | None, cookies: Dict
     fallback = derive_filename(url, metadata.get('title', ''))
     filename = choose_filename(provided_filename, fallback)
     return {'markdown': markdown, 'filename': filename}
-app = FastAPI(title="Markdown.load API", version="0.1.0")
 
-app.add_middleware(
+
+api.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_methods=["POST"],
@@ -303,7 +329,7 @@ app.add_middleware(
 )
 
 
-@app.get("/jobs/{job_id}")
+@api.get("/jobs/{job_id}")
 async def get_job_status(job_id: str) -> Dict[str, Any]:
     async with jobs_lock:
         record = jobs.get(job_id)
@@ -325,7 +351,7 @@ async def get_job_status(job_id: str) -> Dict[str, Any]:
     return payload
 
 
-@app.post("/convert-pdf", status_code=status.HTTP_202_ACCEPTED)
+@api.post("/convert-pdf", status_code=status.HTTP_202_ACCEPTED)
 async def download_pdf(payload: ConvertRequest) -> Dict[str, str]:
     url = str(payload.url)
     cookie_lookup = cookies_to_lookup(payload.cookies)
@@ -344,7 +370,7 @@ async def download_pdf(payload: ConvertRequest) -> Dict[str, str]:
     return await enqueue_job(task)
 
 
-@app.post("/convert-pdf/stream", status_code=status.HTTP_202_ACCEPTED)
+@api.post("/convert-pdf/stream", status_code=status.HTTP_202_ACCEPTED)
 async def upload_pdf(file: UploadFile = File(...), filename: str | None = Form(None), openaiApiKey: str | None = Form(None)) -> Dict[str, str]:
     original_name = file.filename
     try:
@@ -371,7 +397,7 @@ async def upload_pdf(file: UploadFile = File(...), filename: str | None = Form(N
     return await enqueue_job(task)
 
 
-@app.post("/convert-pdf-fancy", status_code=status.HTTP_202_ACCEPTED)
+@api.post("/convert-pdf-fancy", status_code=status.HTTP_202_ACCEPTED)
 async def download_pdf_fancy(payload: ConvertRequest) -> Dict[str, str]:
     url = str(payload.url)
     cookie_lookup = cookies_to_lookup(payload.cookies)
@@ -390,7 +416,7 @@ async def download_pdf_fancy(payload: ConvertRequest) -> Dict[str, str]:
     return await enqueue_job(task)
 
 
-@app.post("/convert-pdf-fancy/stream", status_code=status.HTTP_202_ACCEPTED)
+@api.post("/convert-pdf-fancy/stream", status_code=status.HTTP_202_ACCEPTED)
 async def upload_pdf_fancy(file: UploadFile = File(...), filename: str | None = Form(None), openaiApiKey: str | None = Form(None)) -> Dict[str, str]:
     original_name = file.filename
     try:
@@ -417,7 +443,7 @@ async def upload_pdf_fancy(file: UploadFile = File(...), filename: str | None = 
     return await enqueue_job(task)
 
 
-@app.post("/convert-article", status_code=status.HTTP_202_ACCEPTED)
+@api.post("/convert-article", status_code=status.HTTP_202_ACCEPTED)
 async def download_article(payload: ConvertRequest) -> Dict[str, str]:
     url = str(payload.url)
     provided_html = payload.html
@@ -434,7 +460,7 @@ async def download_article(payload: ConvertRequest) -> Dict[str, str]:
     return await enqueue_job(task)
 
 
-@app.post("/convert-youtube", status_code=status.HTTP_202_ACCEPTED)
+@api.post("/convert-youtube", status_code=status.HTTP_202_ACCEPTED)
 async def download_youtube(payload: ConvertRequest) -> Dict[str, str]:
     url = str(payload.url)
     provided_filename = payload.filename
@@ -446,7 +472,7 @@ async def download_youtube(payload: ConvertRequest) -> Dict[str, str]:
     return await enqueue_job(task)
 
 
-@app.post("/convert-tweet", status_code=status.HTTP_202_ACCEPTED)
+@api.post("/convert-tweet", status_code=status.HTTP_202_ACCEPTED)
 async def download_tweet(payload: ConvertRequest) -> Dict[str, str]:
     url = str(payload.url)
     cookie_lookup = cookies_to_lookup(payload.cookies)
@@ -463,7 +489,7 @@ async def download_tweet(payload: ConvertRequest) -> Dict[str, str]:
     return await enqueue_job(task)
 
 
-@app.post("/convert-substack", status_code=status.HTTP_202_ACCEPTED)
+@api.post("/convert-substack", status_code=status.HTTP_202_ACCEPTED)
 async def download_substack(payload: ConvertRequest) -> Dict[str, str]:
     url = str(payload.url)
     cookie_lookup = cookies_to_lookup(payload.cookies)

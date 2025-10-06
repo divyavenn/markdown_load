@@ -1,7 +1,9 @@
 import { contentTypes } from './content-types.js';
 
 const STATE_KEY = 'markdownLoadState';
-const API_BASE_URL = 'http://127.0.0.1:8000';
+const API_BASE_URL = 'https://divyavenn--markdownload-backend-fastapi-app.modal.run';
+fetch(`${API_BASE_URL}/healthz`).then(r => r.text()).then(console.log).catch(console.error);
+
 const REQUEST_HEADERS = {
   'Content-Type': 'application/json',
   'Accept': 'application/json'
