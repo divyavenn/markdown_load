@@ -248,16 +248,22 @@ def transcribe_with_whisper(audio_path: Path, model_name: str = "small", languag
             "Note: ffmpeg must also be installed and on PATH."
         ) from exc
 
+    model = None
     try:
         # load quantized model to reduce RAM usage
         model = WhisperModel("small", device="cpu", compute_type="int8")
 
         segments, info = model.transcribe(str(audio_path), language=language)
         text_lines = [segment.text.strip() for segment in segments if segment.text.strip()]
-        return "\n".join(text_lines).strip()
+        result = "\n".join(text_lines).strip()
+        return result
 
     except Exception as exc:
         raise RuntimeError(f"Faster-Whisper transcription failed: {exc}") from exc
+    finally:
+        # Explicitly clean up the model to prevent semaphore leaks
+        if model is not None:
+            del model
 
 
 def build_markdown_transcript(
@@ -304,6 +310,9 @@ def fetch_youtube_markdown(
     cookies: Optional[Dict[str, str]] = None
 ) -> str:
     print(f"[YouTube] Starting conversion for: {url}")
+    print(f"[YouTube] OpenAI API key provided: {bool(openai_api_key)}")
+    print(f"[YouTube] Cookies provided: {bool(cookies)}")
+
     with tempfile.TemporaryDirectory(prefix="yt_", suffix="_extract") as tmp:
         out_dir = Path(tmp)
         ensure_directory(out_dir)
@@ -328,9 +337,10 @@ def fetch_youtube_markdown(
             return build_markdown_transcript(title, url, chosen_lang, plain_text)
 
         print("[YouTube] No subtitles found, will need transcription")
+        print(f"[YouTube] Checking openai_api_key: {openai_api_key is not None and openai_api_key != ''}")
         # If no subtitles available, we need transcription
         # Use OpenAI Whisper API if API key is provided, otherwise use local Whisper
-        if openai_api_key:
+        if openai_api_key and openai_api_key.strip():
             print("[YouTube] Using OpenAI Whisper API for transcription")
             print("[YouTube] Downloading audio...")
             audio_path = download_audio(url, out_dir, video_id, cookies=cookies)
@@ -342,19 +352,19 @@ def fetch_youtube_markdown(
                 text = transcribe_with_whisper(audio_path, whisper_model, preferred_lang)
         else:
             print("[YouTube] Checking for local Whisper installation...")
-            # Check if local Whisper is available before downloading audio
+            # Check if faster-whisper is available before downloading audio
             try:
                 import importlib.util
-                whisper_spec = importlib.util.find_spec("whisper")
+                whisper_spec = importlib.util.find_spec("faster_whisper")
                 if whisper_spec is not None:
-                    print("[YouTube] Local Whisper found, using it for transcription")
+                    print("[YouTube] Local Whisper (faster-whisper) found, using it for transcription")
                 else:
-                    raise ImportError("whisper not found")
+                    raise ImportError("faster_whisper not found")
             except ImportError:
                 raise RuntimeError(
                     "No subtitles found for this video. "
-                    "Either provide an OpenAI API key in settings, or install openai-whisper locally: "
-                    "pip install openai-whisper"
+                    "Either provide an OpenAI API key in settings, or install faster-whisper locally: "
+                    "pip install faster-whisper"
                 )
 
             print("[YouTube] Downloading audio...")

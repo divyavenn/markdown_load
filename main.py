@@ -499,8 +499,13 @@ async def download_article(payload: ConvertRequest) -> Dict[str, str]:
 async def download_youtube(payload: ConvertRequest) -> Dict[str, str]:
     url = str(payload.url)
     provided_filename = payload.filename
-    openai_api_key = payload.openaiApiKey
+    # Normalize empty strings to None
+    openai_api_key = payload.openaiApiKey.strip() if payload.openaiApiKey else None
     cookie_lookup = cookies_to_lookup(payload.cookies)
+
+    print(f"[API] YouTube conversion request - URL: {url}")
+    print(f"[API] OpenAI API key provided: {bool(openai_api_key)}")
+    print(f"[API] Cookies count: {len(cookie_lookup)}")
 
     async def task() -> Dict[str, str]:
         return await convert_youtube_async(url, provided_filename, openai_api_key, cookie_lookup)

@@ -2,7 +2,7 @@
 #    uv pip compile pyproject.toml
 aiohappyeyeballs==2.6.1
     # via aiohttp
-aiohttp==3.12.15
+aiohttp==3.13.0
     # via modal
 aiosignal==1.4.0
     # via aiohttp
@@ -20,7 +20,7 @@ anyio==4.11.0
     #   watchfiles
 async-timeout==5.0.1
     # via aiohttp
-attrs==25.3.0
+attrs==25.4.0
     # via
     #   aiohttp
     #   sigtools
@@ -184,7 +184,7 @@ modal==1.1.4
     # via markdownload (pyproject.toml)
 mpmath==1.3.0
     # via sympy
-multidict==6.6.4
+multidict==6.7.0
     # via
     #   aiohttp
     #   grpclib
@@ -426,7 +426,7 @@ websockets==15.0.1
     # via google-genai
 webvtt-py==0.5.1
     # via markdownload (pyproject.toml)
-yarl==1.21.0
+yarl==1.22.0
     # via aiohttp
 yt-dlp==2025.9.26
     # via markdownload (pyproject.toml)
