@@ -6,8 +6,6 @@ const deployment = 'https://divyavenn--markdownload-backend-fastapi-app.modal.ru
 const dev = 'http://127.0.0.1:8000'
 const API_BASE_URL = deployment;
 
-fetch(`${API_BASE_URL}/healthz`).then(r => r.text()).then(console.log).catch(console.error);
-
 const REQUEST_HEADERS = {
   'Content-Type': 'application/json',
   'Accept': 'application/json'

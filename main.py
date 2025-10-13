@@ -38,6 +38,7 @@ image = (
     modal.Image.debian_slim(python_version="3.11")
     .apt_install("ffmpeg")
     .pip_install_from_requirements("requirements.txt")  # now resolves /app/requirements.txt
+    .run_commands("playwright install --with-deps chromium")  # Install Playwright browsers
     # copy your local project into /app inside the image
     .add_local_dir(PROJECT_ROOT, "/app", copy=True)
     .workdir("/app")  # make /app the CWD so imports like "scrapers.*" work
