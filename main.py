@@ -44,7 +44,7 @@ image = (
     .workdir("/app")  # make /app the CWD so imports like "scrapers.*" work
 )
 
-@app.function(image=image, keep_warm=1, timeout=600)
+@app.function(image=image, min_containers=1, timeout=600)
 @modal.asgi_app()
 def fastapi_app():
     return api
