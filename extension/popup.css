@@ -64,7 +64,7 @@ body {
   flex-direction: column;
   gap: 14px;
   color: var(--color-text);
-
+  max-height: calc(100vh - 40px);
 }
 
 .control-row {
@@ -176,8 +176,6 @@ body {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  max-height: 180px;
-  overflow-y: auto;
   color: rgb(255, 255, 255);
   margin: 0;
   padding: 0;
@@ -421,4 +419,53 @@ svg {
 
 .error-icon svg {
   fill: #fbbf24;
+}
+
+.lists-container {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.download-all-button {
+  width: 100%;
+  padding: 12px 16px;
+  border: none;
+  border-radius: 12px;
+  background: linear-gradient(135deg, var(--bright_orange), var(--tangerine));
+  color: #ffffff;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+  box-shadow: 0 10px 25px rgba(255, 122, 24, 0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: auto;
+  flex-shrink: 0;
+}
+
+.download-all-button svg {
+  width: 20px;
+  height: 20px;
+  fill: currentColor;
+}
+
+.download-all-button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 12px 28px rgba(255, 122, 24, 0.35);
+}
+
+.download-all-button:active {
+  transform: translateY(0);
+}
+
+.download-all-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }

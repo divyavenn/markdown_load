@@ -8,6 +8,7 @@ const readyList = document.getElementById('ready-list');
 const filenameInput = document.getElementById('filename');
 const queueButton = document.getElementById('queue');
 const statusLabel = document.getElementById('status');
+const downloadAllButton = document.getElementById('download-all');
 
 const mainView = document.getElementById('main-view');
 const settingsView = document.getElementById('settings-view');
@@ -159,9 +160,11 @@ function renderQueue(items) {
 function renderReady(items) {
   readyList.innerHTML = '';
   if (!items.length) {
+    downloadAllButton.style.display = 'none';
     return;
   }
   readyList.style.display = 'flex';
+  downloadAllButton.style.display = 'flex';
 
   for (const item of items) {
     const li = document.createElement('li');
@@ -223,6 +226,66 @@ async function handleRemoveReady(id) {
     setStatus('removed download');
   } catch (error) {
     setStatus(error.message || 'Remove failed.');
+  }
+}
+
+async function handleDownloadAll() {
+  try {
+    downloadAllButton.disabled = true;
+    setStatus('creating zip file...');
+
+    // Get all ready items from service worker
+    const response = await sendMessage({ type: 'downloadAllReady' });
+    const items = response.items;
+
+    if (!items || items.length === 0) {
+      setStatus('No files to download');
+      return;
+    }
+
+    // Create zip file using JSZip
+    const zip = new JSZip();
+    for (const item of items) {
+      zip.file(item.filename, item.markdown);
+    }
+
+    // Generate the zip blob
+    const zipBlob = await zip.generateAsync({ type: 'blob' });
+
+    // Create download link
+    const url = URL.createObjectURL(zipBlob);
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').split('T')[0];
+    const filename = `markdowns-${timestamp}.zip`;
+
+    // Trigger download using chrome.downloads API
+    await new Promise((resolve, reject) => {
+      chrome.downloads.download(
+        {
+          url: url,
+          filename: filename,
+          saveAs: false
+        },
+        (downloadId) => {
+          if (chrome.runtime.lastError) {
+            reject(new Error(chrome.runtime.lastError.message));
+            return;
+          }
+          resolve(downloadId);
+        }
+      );
+    });
+
+    // Clean up URL
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
+
+    // Clear all ready items at once (just like individual downloads remove themselves)
+    await sendMessage({ type: 'clearAllReady' });
+
+    setStatus('downloading zip!');
+  } catch (error) {
+    setStatus(error.message || 'Download all failed.');
+  } finally {
+    downloadAllButton.disabled = false;
   }
 }
 
@@ -329,6 +392,12 @@ async function prepareUI(url, activeContentType) {
   let capturedHtml = null;
   if (activeContentType.captureHtml) {
     capturedHtml = await capturePageHtml(activeTab.id);
+    if (capturedHtml) {
+      console.log('HTML captured successfully, length:', capturedHtml.length);
+      console.log('Contains <article>:', capturedHtml.includes('<article'));
+    } else {
+      console.warn('HTML capture returned null');
+    }
   }
 
   const settings = await loadSettings();
@@ -521,6 +590,8 @@ queueButton.addEventListener('click', async () => {
     queueButton.disabled = false;
   }
 });
+
+downloadAllButton.addEventListener('click', handleDownloadAll);
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName !== 'local' || !changes[STATE_KEY]) {

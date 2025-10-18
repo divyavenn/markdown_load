@@ -4,7 +4,7 @@ const STATE_KEY = 'markdownLoadState';
 
 const deployment = 'https://divyavenn--markdownload-backend-fastapi-app.modal.run'
 const dev = 'http://127.0.0.1:8000'
-const API_BASE_URL = deployment;
+const API_BASE_URL = dev;
 
 const REQUEST_HEADERS = {
   'Content-Type': 'application/json',
@@ -327,6 +327,10 @@ async function handleMessage(message) {
       return removeQueueItem(message.id);
     case 'downloadReady':
       return downloadReadyItem(message.id);
+    case 'downloadAllReady':
+      return getAllReadyItems();
+    case 'clearAllReady':
+      return clearAllReadyItems();
     case 'removeReady':
       return removeReadyItem(message.id);
     default:
@@ -426,6 +430,21 @@ async function downloadReadyItem(id) {
   await setState(state);
 
   return { downloadId };
+}
+
+async function getAllReadyItems() {
+  const state = await getState();
+  if (!state.ready || state.ready.length === 0) {
+    throw new Error('No files ready to download');
+  }
+  return { items: state.ready };
+}
+
+async function clearAllReadyItems() {
+  const state = await getState();
+  state.ready = [];
+  await setState(state);
+  return {};
 }
 
 async function removeReadyItem(id) {

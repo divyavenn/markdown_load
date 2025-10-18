@@ -24,10 +24,10 @@ from scrapers.youtube import convert_youtube
 
 import modal
 
-# FastAPI app
+# FastAPI app (used for both local dev and Modal deployment)
 api = FastAPI(title="Markdown.load API", version="0.1.0")
 
-# Modal app (the deployable “stub”)
+# Modal app (the deployable "stub")
 app = modal.App("markdownload-backend")
 
 # Absolute local path to your project root
